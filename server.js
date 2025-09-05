@@ -11,7 +11,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000', // Adjust for deployment
+  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));

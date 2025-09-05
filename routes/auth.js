@@ -106,7 +106,7 @@ router.get('/google/callback', async (req, res) => {
       [tokens.access_token, tokens.refresh_token, userId]
     );
 
-    res.redirect(`${process.env.REACT_APP_FRONTEND_URL}/worker`); // Redirect to worker dashboard
+    res.redirect(`${process.env.REACT_APP_FRONTEND_URL}/worker`);
   } catch (error) {
     console.error('Error in Google OAuth callback:', error);
     res.status(500).json({ message: 'Error authenticating with Google' });

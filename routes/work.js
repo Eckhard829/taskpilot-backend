@@ -128,5 +128,18 @@ TaskPilot Team`
 });
 
 // Other routes (e.g., approve, reject, delete) remain unchanged for brevity
+// Example placeholder for completeness
+router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const workItem = await WorkItem.findById(id);
+    if (!workItem) return res.status(404).json({ message: 'Work item not found' });
+    workItem.status = 'approved';
+    await workItem.save();
+    res.json({ message: 'Task approved', workItem: workItem.toJSON() });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 module.exports = router;
