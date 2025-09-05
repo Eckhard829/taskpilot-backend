@@ -39,10 +39,10 @@ app.use(express.json());
 // Initialize SQLite Database
 initializeDatabase();
 
-// Nodemailer Configuration with connection pooling
+// Nodemailer Configuration with connection pooling - FIXED METHOD NAME
 let transporter = null;
 if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  transporter = nodemailer.createTransporter({
+  transporter = nodemailer.createTransport({  // Fixed: createTransport not createTransporter
     service: process.env.EMAIL_SERVICE,
     auth: {
       user: process.env.EMAIL_USER,
