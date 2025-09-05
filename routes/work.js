@@ -128,7 +128,6 @@ TaskPilot Team`
 });
 
 // Other routes (e.g., approve, reject, delete) remain unchanged for brevity
-// Example placeholder for completeness
 router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
