@@ -9,19 +9,31 @@ const workRoutes = require('./routes/work');
 
 const app = express();
 
-// Middleware
-const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:3000', 'https://taskpillot.netlify.app'];
+// CORS Configuration - Fixed
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:3000', 
+  'https://taskpillot.netlify.app',
+  'http://localhost:3000',
+  'http://localhost:3001'
+];
+
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.log('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
+
 app.use(express.json());
 
 // Initialize SQLite Database
@@ -30,7 +42,7 @@ initializeDatabase();
 // Nodemailer Configuration with connection pooling
 let transporter = null;
 if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  transporter = nodemailer.createTransport({
+  transporter = nodemailer.createTransporter({
     service: process.env.EMAIL_SERVICE,
     auth: {
       user: process.env.EMAIL_USER,
@@ -91,4 +103,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Database: SQLite (file-based)`);
   console.log(`🔐 Default admin: admin@taskpilot.com / admin123`);
+  console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
 });
