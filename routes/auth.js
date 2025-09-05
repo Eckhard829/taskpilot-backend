@@ -5,6 +5,13 @@ const bcrypt = require('bcryptjs');
 const { dbGet, dbRun } = require('../config/database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const User = require('../models/User');
+const { google } = require('googleapis');
+
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -70,6 +77,39 @@ router.get('/verify', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Verify error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Google OAuth Routes
+router.get('/google', authenticateToken, (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/calendar.events'],
+    state: JSON.stringify({ userId: req.user.id }),
+  });
+  res.redirect(url);
+});
+
+router.get('/google/callback', async (req, res) => {
+  const { code, state } = req.query;
+  const { userId } = JSON.parse(state);
+
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    await dbRun(
+      'UPDATE users SET googleAccessToken = ?, googleRefreshToken = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      [tokens.access_token, tokens.refresh_token, userId]
+    );
+
+    res.redirect(`${process.env.REACT_APP_FRONTEND_URL}/worker`); // Redirect to worker dashboard
+  } catch (error) {
+    console.error('Error in Google OAuth callback:', error);
+    res.status(500).json({ message: 'Error authenticating with Google' });
   }
 });
 

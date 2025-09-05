@@ -1,30 +1,76 @@
+const express = require('express');
+const router = express.Router();
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { dbGet, dbRun } = require('../config/database');
+const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const User = require('../models/User');
 
-// Middleware to authenticate JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
-
-  if (!token) {
-    return res.status(401).json({ message: 'Authentication token required' });
-  }
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // Attach user data (id, email, role) to request
-    next();
+    const user = await User.findByEmail(email);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ message: 'Account is deactivated' });
+    }
+
+    await user.updateLastLogin();
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.json({
+      token,
+      user: user.toJSON()
+    });
   } catch (error) {
-    console.error('Token verification error:', error);
-    return res.status(403).json({ message: 'Invalid or expired token' });
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
-};
+});
 
-// Middleware to check if user is an admin
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Admin access required' });
+router.post('/register', authenticateToken, requireAdmin, async (req, res) => {
+  const { name, email, password, role } = req.body;
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      role
+    });
+    res.json({ user: user.toJSON() });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(400).json({ message: error.message });
   }
-  next();
-};
+});
 
-module.exports = { authenticateToken, requireAdmin };
+router.get('/verify', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ user: user.toJSON() });
+  } catch (error) {
+    console.error('Verify error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router;
