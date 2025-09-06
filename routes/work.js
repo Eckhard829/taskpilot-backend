@@ -74,13 +74,31 @@ const createCalendarEvent = async (user, workItem) => {
   }
 };
 
-// Get all work items (Admin only)
-router.get('/', authenticateToken, requireAdmin, async (req, res) => {
+// Get all work items for current user (Worker can see their own, Admin can see all)
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const workItems = await WorkItem.findAll();
+    let workItems;
+    if (req.user.role === 'admin') {
+      // Admin sees all work items
+      workItems = await WorkItem.findAll();
+    } else {
+      // Worker sees only their own work items
+      workItems = await WorkItem.findAll({ workerId: req.user.id });
+    }
     res.json(workItems);
   } catch (error) {
     console.error('Error fetching work items:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get submitted work items for review (Admin only)
+router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const submittedWorkItems = await WorkItem.findAll({ status: 'submitted' });
+    res.json(submittedWorkItems);
+  } catch (error) {
+    console.error('Error fetching submitted work items:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
