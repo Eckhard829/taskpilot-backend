@@ -5,6 +5,7 @@ const User = require('../models/User');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { google } = require('googleapis');
 const nodemailer = require('nodemailer');
+const { dbGet } = require('../config/database');
 
 const sendTaskNotification = async (to, subject, text) => {
   if (global.transporter) {
@@ -25,8 +26,19 @@ const sendTaskNotification = async (to, subject, text) => {
 };
 
 const createCalendarEvent = async (user, workItem) => {
-  if (!user.googleAccessToken || !user.googleRefreshToken) {
+  // Check if user has Google OAuth tokens
+  const userTokens = await dbGet(
+    'SELECT googleAccessToken, googleRefreshToken FROM users WHERE id = ?',
+    [user.id]
+  );
+
+  if (!userTokens || !userTokens.googleAccessToken || !userTokens.googleRefreshToken) {
     console.log(`No Google Calendar access for user ${user.email}`);
+    return;
+  }
+
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    console.log('Google OAuth not configured - skipping calendar event');
     return;
   }
 
@@ -37,15 +49,15 @@ const createCalendarEvent = async (user, workItem) => {
   );
 
   oauth2Client.setCredentials({
-    access_token: user.googleAccessToken,
-    refresh_token: user.googleRefreshToken,
+    access_token: userTokens.googleAccessToken,
+    refresh_token: userTokens.googleRefreshToken,
   });
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
   const event = {
     summary: `TaskPilot: ${workItem.task}`,
-    description: `Description: ${workItem.description || 'No description'}\nInstructions: ${workItem.instructions}`,
+    description: `Task: ${workItem.task}\n\nDescription: ${workItem.description || 'No description'}\n\nInstructions: ${workItem.instructions}\n\nAssigned via TaskPilot`,
     start: {
       dateTime: new Date(workItem.deadline).toISOString(),
       timeZone: 'UTC',
@@ -64,13 +76,17 @@ const createCalendarEvent = async (user, workItem) => {
   };
 
   try {
-    await calendar.events.insert({
+    const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event,
     });
     console.log(`Calendar event created for task ${workItem.id} for user ${user.email}`);
+    console.log('Event link:', response.data.htmlLink);
   } catch (error) {
-    console.error('Error creating calendar event:', error);
+    console.error('Error creating calendar event:', error.message);
+    if (error.code === 401) {
+      console.log('Google token expired for user', user.email);
+    }
   }
 };
 
@@ -79,10 +95,8 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     let workItems;
     if (req.user.role === 'admin') {
-      // Admin sees all work items
       workItems = await WorkItem.findAll();
     } else {
-      // Worker sees only their own work items
       workItems = await WorkItem.findAll({ workerId: req.user.id });
     }
     res.json(workItems);
@@ -108,7 +122,6 @@ router.get('/worker/:workerId', authenticateToken, async (req, res) => {
   try {
     const workerId = parseInt(req.params.workerId);
     
-    // Workers can only access their own tasks, admins can access any worker's tasks
     if (req.user.role !== 'admin' && req.user.id !== workerId) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -129,7 +142,6 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'Work item not found' });
     }
 
-    // Check access permissions
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -163,6 +175,8 @@ router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
     const worker = await User.findById(workerId);
     if (worker) {
       const deadlineDate = new Date(deadline);
+      
+      // Send email notification
       await sendTaskNotification(
         worker.email,
         'New Task Assigned - TaskPilot',
@@ -175,7 +189,7 @@ ${description ? `Description: ${description}` : ''}
 Instructions: ${instructions}
 Deadline: ${deadlineDate.toLocaleDateString()} at ${deadlineDate.toLocaleTimeString()}
 
-This task has been added to your Google Calendar (if authorized).
+This task has been added to your Google Calendar (if connected).
 
 Please log into TaskPilot to view and complete this task.
 
@@ -183,6 +197,7 @@ Best regards,
 TaskPilot Team`
       );
 
+      // Create Google Calendar event
       await createCalendarEvent(worker, workItem);
     }
 
@@ -206,12 +221,10 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'Work item not found' });
     }
 
-    // Check if user can complete this task
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // Check if task is already completed or under review
     if (workItem.status === 'submitted' || workItem.status === 'approved') {
       return res.status(400).json({ message: 'Task is already completed or under review' });
     }
@@ -247,7 +260,6 @@ router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => 
       reviewedBy: req.user.id
     });
 
-    // Send approval notification
     const worker = await User.findById(workItem.workerId);
     if (worker) {
       await sendTaskNotification(
@@ -300,7 +312,6 @@ router.put('/reject/:id', authenticateToken, requireAdmin, async (req, res) => {
       reviewedBy: req.user.id
     });
 
-    // Send rejection notification
     const worker = await User.findById(workItem.workerId);
     if (worker) {
       await sendTaskNotification(
