@@ -1,3 +1,4 @@
+// routes/work.js - Complete file
 const express = require('express');
 const router = express.Router();
 const WorkItem = require('../models/WorkItem');
@@ -95,7 +96,6 @@ const createCalendarEvent = async (user, workItem) => {
   }
 };
 
-// Add test route for debugging
 router.get('/test', authenticateToken, (req, res) => {
   res.status(200).json({ 
     message: 'Backend is working',
@@ -227,7 +227,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
   try {
     const { explanation, workLink } = req.body;
     
-    // Validate request body
     if (!explanation || !explanation.trim()) {
       return res.status(400).json({ 
         message: 'Explanation is required',
@@ -235,7 +234,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
       });
     }
     
-    // Find the work item
     const workItem = await WorkItem.findById(req.params.id);
 
     if (!workItem) {
@@ -245,7 +243,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check permissions
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
       return res.status(403).json({ 
         message: 'Access denied',
@@ -253,7 +250,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check current status
     if (workItem.status === 'submitted') {
       return res.status(400).json({ 
         message: 'Task is already submitted for review',
@@ -270,7 +266,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
 
     console.log('All validations passed, attempting to mark completed...');
 
-    // Mark task as completed
     const updatedWorkItem = await workItem.markCompleted({ 
       explanation: explanation.trim(), 
       workLink: workLink?.trim() || null 
@@ -278,7 +273,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
 
     console.log('Task marked as completed successfully');
 
-    // Send success response
     res.status(200).json({
       message: 'Task submitted for review successfully',
       workItem: updatedWorkItem.toJSON(),
@@ -289,7 +283,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
     console.error('Error completing task:', error);
     console.error('Error stack:', error.stack);
     
-    // More specific error responses based on error type
     if (error.message.includes('Explanation is required')) {
       return res.status(400).json({ 
         message: error.message,
@@ -325,7 +318,6 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
       });
     }
     
-    // Generic server error
     res.status(500).json({ 
       message: 'Server error while completing task',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',

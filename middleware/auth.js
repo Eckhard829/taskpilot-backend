@@ -1,16 +1,14 @@
-// middleware/auth.js - Fixed version without problematic unicode characters
+// middleware/auth.js - Complete file
 const jwt = require('jsonwebtoken');
 
 const authenticateToken = (req, res, next) => {
-  // Debug: Log all headers to see what's being sent
   console.log('=== Authentication Debug ===');
   console.log('Request URL:', req.url);
   console.log('Request Method:', req.method);
   console.log('Authorization Header:', req.headers.authorization);
-  console.log('All Headers:', JSON.stringify(req.headers, null, 2));
   
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  const token = authHeader && authHeader.split(' ')[1];
 
   console.log('Auth Header:', authHeader);
   console.log('Extracted Token:', token ? 'Present' : 'Missing');

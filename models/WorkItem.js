@@ -1,3 +1,4 @@
+// models/WorkItem.js - Complete file
 const { dbGet, dbAll, dbRun } = require('../config/database');
 
 class WorkItem {
@@ -213,7 +214,6 @@ class WorkItem {
         throw new Error('Explanation is required to mark task as completed');
       }
 
-      // Validate work link if provided
       if (completionData.workLink && completionData.workLink.trim()) {
         const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
         if (!urlRegex.test(completionData.workLink.trim())) {
@@ -230,7 +230,6 @@ class WorkItem {
 
       console.log('Updating work item with data:', updateData);
       
-      // Use the database directly to ensure proper transaction
       const result = await dbRun(`
         UPDATE work_items 
         SET status = ?, submittedAt = ?, explanation = ?, workLink = ?
@@ -249,7 +248,6 @@ class WorkItem {
         throw new Error('Work item not found or no changes made');
       }
 
-      // Refresh the instance
       const updated = await WorkItem.findById(this.id);
       if (updated) {
         Object.assign(this, updated);

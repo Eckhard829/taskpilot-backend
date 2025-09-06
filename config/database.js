@@ -1,8 +1,8 @@
+// config/database.js - Complete file
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
-// Create database connection with optimized settings
 const dbPath = path.join(__dirname, '../database.sqlite');
 console.log('Database path:', dbPath);
 
@@ -11,9 +11,8 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
     console.error('Error opening database:', err);
   } else {
     console.log('Connected to SQLite database at:', dbPath);
-    db.configure('busyTimeout', 10000); // Increased timeout to 10 seconds
+    db.configure('busyTimeout', 10000);
     
-    // Enable foreign keys
     db.run('PRAGMA foreign_keys = ON', (err) => {
       if (err) {
         console.error('Error enabling foreign keys:', err);
@@ -22,7 +21,6 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
       }
     });
     
-    // Enable WAL mode for better concurrency
     db.run('PRAGMA journal_mode = WAL', (err) => {
       if (err) {
         console.error('Error setting journal mode:', err);
@@ -33,10 +31,8 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
   }
 });
 
-// Initialize database tables
 const initializeDatabase = () => {
   db.serialize(() => {
-    // Users table
     db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,7 +53,6 @@ const initializeDatabase = () => {
       } else {
         console.log('Users table ready');
         
-        // Check if Google OAuth columns exist and add them if they don't
         db.all("PRAGMA table_info(users)", (err, columns) => {
           if (!err) {
             const columnNames = columns.map(col => col.name);
@@ -76,7 +71,6 @@ const initializeDatabase = () => {
       }
     });
 
-    // Work items table with complete schema
     db.run(`
       CREATE TABLE IF NOT EXISTS work_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +98,6 @@ const initializeDatabase = () => {
       } else {
         console.log('Work items table ready');
         
-        // Check if additional columns exist and add them if they don't
         db.all("PRAGMA table_info(work_items)", (err, columns) => {
           if (!err) {
             const columnNames = columns.map(col => col.name);
@@ -128,7 +121,6 @@ const initializeDatabase = () => {
       }
     });
 
-    // Create admin user if it doesn't exist
     db.get('SELECT * FROM users WHERE email = ?', ['admin@taskpilot.com'], async (err, row) => {
       if (err) {
         console.error('Error checking for admin user:', err);
@@ -153,7 +145,6 @@ const initializeDatabase = () => {
   });
 };
 
-// Helper function to promisify database operations with better error handling
 const dbGet = (sql, params = []) => {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => {
@@ -211,7 +202,6 @@ const dbRun = (sql, params = []) => {
   });
 };
 
-// Add database health check function
 const checkDatabaseHealth = () => {
   return new Promise((resolve, reject) => {
     db.get('SELECT 1 as test', [], (err, row) => {
@@ -226,7 +216,6 @@ const checkDatabaseHealth = () => {
   });
 };
 
-// Graceful shutdown
 process.on('SIGINT', () => {
   console.log('Closing database connection...');
   db.close((err) => {
