@@ -1,101 +1,15 @@
-// Debug version of server.js with comprehensive error logging
-console.log('🚀 Starting TaskPilot Backend...');
-
-// Check if required modules can be loaded
-try {
-  require('dotenv').config();
-  console.log('✅ dotenv loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load dotenv:', error.message);
-  process.exit(1);
-}
-
-try {
-  const express = require('express');
-  console.log('✅ express loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load express:', error.message);
-  process.exit(1);
-}
-
-try {
-  const cors = require('cors');
-  console.log('✅ cors loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load cors:', error.message);
-  process.exit(1);
-}
-
-// Check critical environment variables
-console.log('🔧 Environment Check:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('PORT:', process.env.PORT);
-console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
-console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-
-if (!process.env.JWT_SECRET) {
-  console.error('❌ CRITICAL: JWT_SECRET environment variable is not set!');
-  console.log('Please set JWT_SECRET in your Render environment variables');
-  process.exit(1);
-}
-
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-let nodemailer;
-
-try {
-  nodemailer = require('nodemailer');
-  console.log('✅ nodemailer loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load nodemailer:', error.message);
-  // Don't exit, email is optional
-}
-
-// Try to load database module
-let database;
-try {
-  database = require('./config/database');
-  console.log('✅ database module loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load database module:', error.message);
-  console.error('Make sure ./config/database.js exists and is properly configured');
-  process.exit(1);
-}
-
-// Try to load route modules
-let authRoutes, usersRoutes, workRoutes;
-
-try {
-  authRoutes = require('./routes/auth');
-  console.log('✅ auth routes loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load auth routes:', error.message);
-  process.exit(1);
-}
-
-try {
-  usersRoutes = require('./routes/users');
-  console.log('✅ users routes loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load users routes:', error.message);
-  process.exit(1);
-}
-
-try {
-  workRoutes = require('./routes/work');
-  console.log('✅ work routes loaded successfully');
-} catch (error) {
-  console.error('❌ Failed to load work routes:', error.message);
-  process.exit(1);
-}
-
-const { initializeDatabase, db } = database;
-
-console.log('✅ All modules loaded successfully, starting server setup...');
+const nodemailer = require('nodemailer');
+const { initializeDatabase, db } = require('./config/database');
+const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');
+const workRoutes = require('./routes/work');
 
 const app = express();
 
-// CORS Configuration
+// CORS Configuration - Updated for Netlify + Render
 const allowedOrigins = [
   process.env.FRONTEND_URL, 
   process.env.REACT_APP_FRONTEND_URL,
@@ -104,7 +18,7 @@ const allowedOrigins = [
   'http://localhost:3001'
 ].filter(Boolean);
 
-console.log('🌐 Configured CORS origins:', allowedOrigins);
+console.log('Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -116,7 +30,8 @@ app.use(cors({
     })) {
       callback(null, true);
     } else {
-      console.log('❌ CORS blocked origin:', origin);
+      console.log('CORS blocked origin:', origin);
+      console.log('Allowed origins:', allowedOrigins);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -136,22 +51,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-console.log('✅ Express middleware configured');
+// Initialize SQLite Database
+initializeDatabase();
 
-// Initialize Database
-try {
-  initializeDatabase();
-  console.log('✅ Database initialization started');
-} catch (error) {
-  console.error('❌ Database initialization failed:', error.message);
-  process.exit(1);
-}
-
-// Email Configuration (optional)
+// Email Configuration - FIXED: createTransport not createTransporter
 let transporter = null;
-if (nodemailer && process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
   try {
-    transporter = nodemailer.createTransporter({
+    transporter = nodemailer.createTransport({  // FIXED: was createTransporter
       service: process.env.EMAIL_SERVICE,
       auth: {
         user: process.env.EMAIL_USER,
@@ -164,22 +71,34 @@ if (nodemailer && process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process
 
     transporter.verify((error, success) => {
       if (error) {
-        console.error('❌ Email configuration error:', error);
+        console.error('Email configuration error:', error);
       } else {
-        console.log('✅ Email service ready');
+        console.log('Email service ready');
       }
     });
   } catch (error) {
-    console.error('❌ Email transporter setup failed:', error.message);
+    console.error('Email transporter setup failed:', error.message);
   }
 } else {
-  console.log('ℹ️ Email not configured - notifications disabled');
+  console.log('Email not configured - notifications disabled');
 }
 
 app.set('transporter', transporter);
 global.transporter = transporter;
 
-// Basic health check
+// Environment check endpoint
+app.get('/api/env-check', (req, res) => {
+  res.json({
+    nodeEnv: process.env.NODE_ENV,
+    hasJwtSecret: !!process.env.JWT_SECRET,
+    hasEmailConfig: !!(process.env.EMAIL_SERVICE && process.env.EMAIL_USER),
+    frontendUrl: process.env.FRONTEND_URL || process.env.REACT_APP_FRONTEND_URL,
+    allowedOrigins: allowedOrigins,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Health check endpoint
 app.get('/api/health', async (req, res) => {
   try {
     await new Promise((resolve, reject) => {
@@ -196,7 +115,7 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString() 
     });
   } catch (error) {
-    console.error('❌ Health check failed:', error);
+    console.error('Health check failed:', error);
     res.status(500).json({ 
       status: 'ERROR', 
       message: 'Database connection failed',
@@ -205,46 +124,14 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Environment check endpoint
-app.get('/api/env-check', (req, res) => {
-  res.json({
-    nodeEnv: process.env.NODE_ENV,
-    hasJwtSecret: !!process.env.JWT_SECRET,
-    hasEmailConfig: !!(process.env.EMAIL_SERVICE && process.env.EMAIL_USER),
-    frontendUrl: process.env.FRONTEND_URL || process.env.REACT_APP_FRONTEND_URL,
-    allowedOrigins: allowedOrigins,
-    timestamp: new Date().toISOString()
-  });
-});
-
 // Routes
-try {
-  app.use('/api/auth', authRoutes);
-  console.log('✅ Auth routes registered');
-} catch (error) {
-  console.error('❌ Failed to register auth routes:', error.message);
-  process.exit(1);
-}
-
-try {
-  app.use('/api/users', usersRoutes);
-  console.log('✅ Users routes registered');
-} catch (error) {
-  console.error('❌ Failed to register users routes:', error.message);
-  process.exit(1);
-}
-
-try {
-  app.use('/api/work', workRoutes);
-  console.log('✅ Work routes registered');
-} catch (error) {
-  console.error('❌ Failed to register work routes:', error.message);
-  process.exit(1);
-}
+app.use('/api/auth', authRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/work', workRoutes);
 
 // Catch-all for undefined routes
 app.use('*', (req, res) => {
-  console.log(`🔍 404 - Route not found: ${req.method} ${req.originalUrl}`);
+  console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
   res.status(404).json({ 
     message: 'Route not found',
     path: req.originalUrl,
@@ -254,7 +141,7 @@ app.use('*', (req, res) => {
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-  console.error('💥 Server Error:', err);
+  console.error('Server Error:', err);
   
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ 
@@ -278,42 +165,26 @@ app.use((err, req, res, next) => {
 
 // Start Server
 const PORT = process.env.PORT || 5000;
-console.log(`🚀 Attempting to start server on port ${PORT}...`);
-
-try {
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server running successfully on port ${PORT}`);
-    console.log(`🗄️ Database: SQLite`);
-    console.log(`🔐 JWT Secret: ${process.env.JWT_SECRET ? 'Set' : 'MISSING'}`);
-    console.log(`📧 Email: ${transporter ? 'Configured' : 'Disabled'}`);
-    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔗 Allowed origins: ${allowedOrigins.length} configured`);
-    console.log('🎉 TaskPilot Backend is ready!');
-  });
-
-  server.on('error', (error) => {
-    console.error('❌ Server failed to start:', error.message);
-    if (error.code === 'EADDRINUSE') {
-      console.error(`Port ${PORT} is already in use`);
-    }
-    process.exit(1);
-  });
-} catch (error) {
-  console.error('❌ Failed to create server:', error.message);
-  process.exit(1);
-}
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Database: SQLite`);
+  console.log(`JWT Secret: ${process.env.JWT_SECRET ? 'Set' : 'MISSING'}`);
+  console.log(`Email: ${transporter ? 'Configured' : 'Disabled'}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Allowed origins: ${allowedOrigins.length} configured`);
+});
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully');
+  console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {
-    console.log('💤 Process terminated');
+    console.log('Process terminated');
     if (db) {
       db.close((err) => {
         if (err) {
-          console.error('❌ Error closing database:', err);
+          console.error('Error closing database:', err);
         } else {
-          console.log('🗄️ Database connection closed');
+          console.log('Database connection closed');
         }
         process.exit(0);
       });
@@ -321,18 +192,6 @@ process.on('SIGTERM', () => {
       process.exit(0);
     }
   });
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('💥 Uncaught Exception:', error);
-  console.error('Stack trace:', error.stack);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
 });
 
 module.exports = app;
