@@ -8,7 +8,7 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
   if (err) {
     console.error('Error opening database:', err);
   } else {
-    console.log('✅ Connected to SQLite database');
+    console.log('Connected to SQLite database');
     db.configure('busyTimeout', 5000);
   }
 });
@@ -26,6 +26,8 @@ const initializeDatabase = () => {
         role TEXT DEFAULT 'worker' CHECK (role IN ('admin', 'worker')),
         isActive BOOLEAN DEFAULT 1,
         lastLogin DATETIME,
+        googleAccessToken TEXT,
+        googleRefreshToken TEXT,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -33,7 +35,24 @@ const initializeDatabase = () => {
       if (err) {
         console.error('Error creating users table:', err);
       } else {
-        console.log('✅ Users table ready');
+        console.log('Users table ready');
+        
+        // Check if Google OAuth columns exist and add them if they don't
+        db.all("PRAGMA table_info(users)", (err, columns) => {
+          if (!err) {
+            const columnNames = columns.map(col => col.name);
+            if (!columnNames.includes('googleAccessToken')) {
+              db.run('ALTER TABLE users ADD COLUMN googleAccessToken TEXT', (err) => {
+                if (!err) console.log('Added googleAccessToken column to users');
+              });
+            }
+            if (!columnNames.includes('googleRefreshToken')) {
+              db.run('ALTER TABLE users ADD COLUMN googleRefreshToken TEXT', (err) => {
+                if (!err) console.log('Added googleRefreshToken column to users');
+              });
+            }
+          }
+        });
       }
     });
 
@@ -63,19 +82,19 @@ const initializeDatabase = () => {
       if (err) {
         console.error('Error creating work_items table:', err);
       } else {
-        console.log('✅ Work items table ready');
+        console.log('Work items table ready');
         
         db.all("PRAGMA table_info(work_items)", (err, columns) => {
           if (!err) {
             const columnNames = columns.map(col => col.name);
             if (!columnNames.includes('workLink')) {
               db.run('ALTER TABLE work_items ADD COLUMN workLink TEXT', (err) => {
-                if (!err) console.log('✅ Added workLink column to work_items');
+                if (!err) console.log('Added workLink column to work_items');
               });
             }
             if (!columnNames.includes('reviewNotes')) {
               db.run('ALTER TABLE work_items ADD COLUMN reviewNotes TEXT', (err) => {
-                if (!err) console.log('✅ Added reviewNotes column to work_items');
+                if (!err) console.log('Added reviewNotes column to work_items');
               });
             }
           }
@@ -97,7 +116,7 @@ const initializeDatabase = () => {
             if (err) {
               console.error('Error creating admin user:', err);
             } else {
-              console.log('✅ Default admin user created (admin@taskpilot.com / admin123)');
+              console.log('Default admin user created (admin@taskpilot.com / admin123)');
             }
           });
         } catch (error) {

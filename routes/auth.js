@@ -7,11 +7,15 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const User = require('../models/User');
 const { google } = require('googleapis');
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+// Initialize OAuth2 client only if credentials are provided
+let oauth2Client = null;
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI) {
+  oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+}
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -36,7 +40,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
     res.json({
@@ -80,29 +84,40 @@ router.get('/verify', authenticateToken, async (req, res) => {
   }
 });
 
-// Google OAuth Routes - FIXED
+// Google OAuth Routes
 router.get('/google', authenticateToken, (req, res) => {
-  // Create a temporary token that includes the user ID and expires in 10 minutes
-  const tempToken = jwt.sign(
-    { userId: req.user.id, type: 'oauth_temp' },
-    process.env.JWT_SECRET,
-    { expiresIn: '10m' }
-  );
+  if (!oauth2Client) {
+    return res.status(500).json({ message: 'Google OAuth not configured' });
+  }
 
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/calendar.events'],
-    state: tempToken, // Use the temporary token as state
-  });
-  
-  res.redirect(url);
+  try {
+    const tempToken = jwt.sign(
+      { userId: req.user.id, type: 'oauth_temp' },
+      process.env.JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/calendar.events'],
+      state: tempToken,
+    });
+    
+    res.redirect(url);
+  } catch (error) {
+    console.error('Error generating Google OAuth URL:', error);
+    res.status(500).json({ message: 'Failed to generate OAuth URL' });
+  }
 });
 
 router.get('/google/callback', async (req, res) => {
   const { code, state } = req.query;
 
+  if (!oauth2Client) {
+    return res.redirect(`${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error&reason=not_configured`);
+  }
+
   try {
-    // Verify the temporary token from the state parameter
     const decoded = jwt.verify(state, process.env.JWT_SECRET);
     
     if (decoded.type !== 'oauth_temp') {
@@ -117,24 +132,20 @@ router.get('/google/callback', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Update user with Google tokens
     await dbRun(
       'UPDATE users SET googleAccessToken = ?, googleRefreshToken = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
       [tokens.access_token, tokens.refresh_token, userId]
     );
 
-    // Redirect back to the appropriate dashboard with success message
     const redirectUrl = user.role === 'admin' 
       ? `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}/admin`
       : `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}/worker`;
     
-    // Add success parameter to URL
     res.redirect(`${redirectUrl}?googleAuth=success`);
     
   } catch (error) {
     console.error('Error in Google OAuth callback:', error);
     
-    // Redirect back with error parameter
     const errorRedirectUrl = `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`;
     res.redirect(errorRedirectUrl);
   }
