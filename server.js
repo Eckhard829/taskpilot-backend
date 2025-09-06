@@ -62,22 +62,70 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Initialize SQLite Database
 initializeDatabase();
 
-// Email Configuration
+// FIXED EMAIL CONFIGURATION - THIS IS THE MAIN FIX
 let transporter = null;
+console.log('=== Email Configuration Debug ===');
+console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'NOT SET');
+console.log('EMAIL_USER:', process.env.EMAIL_USER || 'NOT SET');
+console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET' : 'NOT SET');
+
 if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  transporter = nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
+  try {
+    transporter = nodemailer.createTransporter({
+      service: process.env.EMAIL_SERVICE,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+    
+    // CRITICAL FIX: Set global transporter for use in routes
+    global.transporter = transporter;
+    
+    // Test email configuration
+    transporter.verify((error, success) => {
+      if (error) {
+        console.error('Email service setup failed:', error);
+        console.log('Email notifications will be disabled but app will continue');
+        // Keep global.transporter set but mark as non-functional
+        global.emailWorking = false;
+      } else {
+        console.log('Email service is ready and functional');
+        global.emailWorking = true;
+      }
+    });
+  } catch (error) {
+    console.error('Error creating email transporter:', error);
+    global.transporter = null;
+    global.emailWorking = false;
+  }
+} else {
+  console.log('Email service not configured (missing environment variables)');
+  console.log('Required: EMAIL_SERVICE, EMAIL_USER, EMAIL_PASS');
+  console.log('Application will continue without email notifications');
+  
+  // CRITICAL: Prevent undefined errors by setting to null
+  global.transporter = null;
+  global.emailWorking = false;
 }
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/work', workRoutes);
+
+// Health check route for debugging
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    emailConfigured: !!global.transporter,
+    emailWorking: global.emailWorking || false,
+    jwtSecretSet: !!process.env.JWT_SECRET,
+    database: 'SQLite'
+  });
+});
 
 // Catch-all for undefined routes
 app.use('*', (req, res) => {
@@ -91,7 +139,13 @@ app.use('*', (req, res) => {
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-  console.error('Server Error:', err);
+  console.error('=== SERVER ERROR ===');
+  console.error('Error:', err);
+  console.error('Stack:', err.stack);
+  console.error('Request URL:', req.url);
+  console.error('Request Method:', req.method);
+  console.error('Request Headers:', req.headers);
+  console.error('Request Body:', req.body);
   
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ 
@@ -109,7 +163,8 @@ app.use((err, req, res, next) => {
   
   res.status(500).json({ 
     message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
@@ -119,7 +174,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Database: SQLite`);
   console.log(`JWT Secret: ${process.env.JWT_SECRET ? 'Set' : 'MISSING'}`);
-  console.log(`Email: ${transporter ? 'Configured' : 'Disabled'}`);
+  console.log(`Email: ${global.transporter ? 'Configured' : 'Disabled'}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Allowed origins: ${allowedOrigins.length} configured`);
 });

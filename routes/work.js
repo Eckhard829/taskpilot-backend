@@ -7,21 +7,31 @@ const { google } = require('googleapis');
 const nodemailer = require('nodemailer');
 const { dbGet } = require('../config/database');
 
+// IMPROVED EMAIL NOTIFICATION FUNCTION
 const sendTaskNotification = async (to, subject, text) => {
-  if (global.transporter) {
-    try {
-      await global.transporter.sendMail({
-        from: process.env.EMAIL_USER || 'noreply@taskpilot.com',
-        to,
-        subject,
-        text,
-      });
-      console.log('Email sent successfully to:', to);
-    } catch (error) {
-      console.error('Failed to send email to', to, ':', error);
-    }
-  } else {
+  // Check if global transporter exists and is working
+  if (!global.transporter) {
     console.log('Email not configured - skipping notification to:', to);
+    return { success: false, reason: 'Email not configured' };
+  }
+
+  if (!global.emailWorking) {
+    console.log('Email not working - skipping notification to:', to);
+    return { success: false, reason: 'Email service not working' };
+  }
+
+  try {
+    await global.transporter.sendMail({
+      from: process.env.EMAIL_USER || 'noreply@taskpilot.com',
+      to,
+      subject,
+      text,
+    });
+    console.log('Email sent successfully to:', to);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send email to', to, ':', error);
+    return { success: false, reason: error.message };
   }
 };
 
@@ -211,33 +221,101 @@ TaskPilot Team`
   }
 });
 
-// Complete/Submit a work item
+// FIXED COMPLETION ROUTE - THIS IS THE CRITICAL FIX
 router.put('/complete/:id', authenticateToken, async (req, res) => {
+  console.log('=== TASK COMPLETION REQUEST DEBUG ===');
+  console.log('Task ID:', req.params.id);
+  console.log('User ID:', req.user?.id);
+  console.log('User Role:', req.user?.role);
+  console.log('Request Body:', req.body);
+  console.log('Global transporter exists:', !!global.transporter);
+  console.log('Email working:', global.emailWorking);
+  
   try {
     const { explanation, workLink } = req.body;
+    
+    // Validate input
+    if (!explanation || !explanation.trim()) {
+      console.log('❌ Validation failed: Missing explanation');
+      return res.status(400).json({ 
+        message: 'Explanation is required',
+        field: 'explanation'
+      });
+    }
+    
+    console.log('✅ Input validation passed');
+    console.log('Finding work item...');
+    
     const workItem = await WorkItem.findById(req.params.id);
 
     if (!workItem) {
+      console.log('❌ Work item not found');
       return res.status(404).json({ message: 'Work item not found' });
     }
 
+    console.log('✅ Work item found:', {
+      id: workItem.id,
+      status: workItem.status,
+      workerId: workItem.workerId,
+      requestingUserId: req.user.id
+    });
+
+    // Check permissions
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
+      console.log('❌ Access denied - user not authorized');
       return res.status(403).json({ message: 'Access denied' });
     }
 
+    console.log('✅ Permission check passed');
+
+    // Check status
     if (workItem.status === 'submitted' || workItem.status === 'approved') {
-      return res.status(400).json({ message: 'Task is already completed or under review' });
+      console.log('❌ Task already completed or under review');
+      return res.status(400).json({ 
+        message: 'Task is already completed or under review',
+        currentStatus: workItem.status
+      });
     }
 
-    await workItem.markCompleted({ explanation, workLink });
+    console.log('✅ Status check passed');
+    console.log('Attempting to mark task as completed...');
+    
+    // Use the improved markCompleted method
+    const completionData = {
+      explanation: explanation.trim(),
+      workLink: workLink?.trim() || null
+    };
+    
+    console.log('Completion data:', completionData);
+    
+    await workItem.markCompleted(completionData);
 
+    console.log('✅ Task marked as completed successfully');
+    
+    // Send success response
     res.json({
       message: 'Task submitted for review successfully',
       workItem: workItem.toJSON()
     });
+    
+    console.log('✅ Response sent successfully');
+    
   } catch (error) {
-    console.error('Error completing task:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('❌ ERROR in task completion route:');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Error name:', error.name);
+    
+    // Send detailed error response
+    res.status(500).json({ 
+      message: 'Server error while completing task',
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? {
+        stack: error.stack,
+        name: error.name,
+        code: error.code
+      } : undefined
+    });
   }
 });
 
