@@ -213,17 +213,50 @@ class WorkItem {
         throw new Error('Explanation is required to mark task as completed');
       }
 
+      // Validate work link if provided
+      if (completionData.workLink && completionData.workLink.trim()) {
+        const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
+        if (!urlRegex.test(completionData.workLink.trim())) {
+          throw new Error('Please provide a valid URL');
+        }
+      }
+
       const updateData = {
         status: 'submitted',
         submittedAt: new Date().toISOString(),
         explanation: completionData.explanation.trim(),
-        workLink: completionData.workLink || null
+        workLink: completionData.workLink ? completionData.workLink.trim() : null
       };
 
-      console.log('Calling this.update with:', updateData);
-      const result = await this.update(updateData);
+      console.log('Updating work item with data:', updateData);
+      
+      // Use the database directly to ensure proper transaction
+      const result = await dbRun(`
+        UPDATE work_items 
+        SET status = ?, submittedAt = ?, explanation = ?, workLink = ?
+        WHERE id = ?
+      `, [
+        updateData.status,
+        updateData.submittedAt,
+        updateData.explanation,
+        updateData.workLink,
+        this.id
+      ]);
+
+      console.log('Database update result:', result);
+
+      if (result.changes === 0) {
+        throw new Error('Work item not found or no changes made');
+      }
+
+      // Refresh the instance
+      const updated = await WorkItem.findById(this.id);
+      if (updated) {
+        Object.assign(this, updated);
+      }
+
       console.log('markCompleted successful');
-      return result;
+      return this;
       
     } catch (error) {
       console.error('Error in WorkItem.markCompleted:', error);

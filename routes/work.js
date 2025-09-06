@@ -95,6 +95,15 @@ const createCalendarEvent = async (user, workItem) => {
   }
 };
 
+// Add test route for debugging
+router.get('/test', authenticateToken, (req, res) => {
+  res.status(200).json({ 
+    message: 'Backend is working',
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+});
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     let workItems;
@@ -103,7 +112,7 @@ router.get('/', authenticateToken, async (req, res) => {
     } else {
       workItems = await WorkItem.findAll({ workerId: req.user.id });
     }
-    res.json(workItems);
+    res.status(200).json(workItems);
   } catch (error) {
     console.error('Error fetching work items:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -113,7 +122,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const submittedWorkItems = await WorkItem.findAll({ status: 'submitted' });
-    res.json(submittedWorkItems);
+    res.status(200).json(submittedWorkItems);
   } catch (error) {
     console.error('Error fetching submitted work items:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -129,7 +138,7 @@ router.get('/worker/:workerId', authenticateToken, async (req, res) => {
     }
 
     const workItems = await WorkItem.findAll({ workerId });
-    res.json(workItems);
+    res.status(200).json(workItems);
   } catch (error) {
     console.error('Error fetching worker tasks:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -147,7 +156,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    res.json(workItem);
+    res.status(200).json(workItem);
   } catch (error) {
     console.error('Error fetching work item:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -199,7 +208,7 @@ TaskPilot Team`
       await createCalendarEvent(worker, workItem);
     }
 
-    res.json({
+    res.status(201).json({
       message: 'Task assigned successfully',
       workItem: workItem.toJSON()
     });
@@ -218,39 +227,110 @@ router.put('/complete/:id', authenticateToken, async (req, res) => {
   try {
     const { explanation, workLink } = req.body;
     
+    // Validate request body
     if (!explanation || !explanation.trim()) {
-      return res.status(400).json({ message: 'Explanation is required' });
+      return res.status(400).json({ 
+        message: 'Explanation is required',
+        error: 'Missing or empty explanation field'
+      });
     }
     
+    // Find the work item
     const workItem = await WorkItem.findById(req.params.id);
 
     if (!workItem) {
-      return res.status(404).json({ message: 'Work item not found' });
+      return res.status(404).json({ 
+        message: 'Work item not found',
+        error: `No work item found with ID: ${req.params.id}`
+      });
     }
 
+    // Check permissions
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
-      return res.status(403).json({ message: 'Access denied' });
+      return res.status(403).json({ 
+        message: 'Access denied',
+        error: 'You can only complete tasks assigned to you'
+      });
     }
 
-    if (workItem.status === 'submitted' || workItem.status === 'approved') {
-      return res.status(400).json({ message: 'Task is already completed or under review' });
+    // Check current status
+    if (workItem.status === 'submitted') {
+      return res.status(400).json({ 
+        message: 'Task is already submitted for review',
+        error: 'Cannot resubmit task that is already under review'
+      });
     }
 
-    await workItem.markCompleted({ 
+    if (workItem.status === 'approved') {
+      return res.status(400).json({ 
+        message: 'Task is already approved',
+        error: 'Cannot modify approved task'
+      });
+    }
+
+    console.log('All validations passed, attempting to mark completed...');
+
+    // Mark task as completed
+    const updatedWorkItem = await workItem.markCompleted({ 
       explanation: explanation.trim(), 
       workLink: workLink?.trim() || null 
     });
 
-    res.json({
+    console.log('Task marked as completed successfully');
+
+    // Send success response
+    res.status(200).json({
       message: 'Task submitted for review successfully',
-      workItem: workItem.toJSON()
+      workItem: updatedWorkItem.toJSON(),
+      success: true
     });
     
   } catch (error) {
     console.error('Error completing task:', error);
+    console.error('Error stack:', error.stack);
+    
+    // More specific error responses based on error type
+    if (error.message.includes('Explanation is required')) {
+      return res.status(400).json({ 
+        message: error.message,
+        error: 'Validation failed'
+      });
+    }
+    
+    if (error.message.includes('valid URL')) {
+      return res.status(400).json({ 
+        message: error.message,
+        error: 'Invalid URL format'
+      });
+    }
+    
+    if (error.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({ 
+        message: 'Task is already being processed',
+        error: 'Database constraint violation'
+      });
+    }
+
+    if (error.message.includes('FOREIGN KEY')) {
+      return res.status(400).json({ 
+        message: 'Invalid task or user reference',
+        error: 'Database foreign key constraint'
+      });
+    }
+
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ 
+        message: error.message,
+        error: 'Resource not found'
+      });
+    }
+    
+    // Generic server error
     res.status(500).json({ 
       message: 'Server error while completing task',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+      timestamp: new Date().toISOString(),
+      taskId: req.params.id
     });
   }
 });
@@ -291,7 +371,7 @@ TaskPilot Team`
       );
     }
 
-    res.json({
+    res.status(200).json({
       message: 'Work approved successfully',
       workItem: workItem.toJSON()
     });
@@ -344,7 +424,7 @@ TaskPilot Team`
       );
     }
 
-    res.json({
+    res.status(200).json({
       message: 'Work rejected and returned for revision',
       workItem: workItem.toJSON()
     });
@@ -363,7 +443,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     await workItem.update(req.body);
 
-    res.json({
+    res.status(200).json({
       message: 'Work item updated successfully',
       workItem: workItem.toJSON()
     });
@@ -382,7 +462,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     await workItem.delete();
 
-    res.json({ message: 'Work item deleted successfully' });
+    res.status(200).json({ message: 'Work item deleted successfully' });
   } catch (error) {
     console.error('Error deleting work item:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -397,7 +477,7 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
     const approvedTasks = await WorkItem.count({ status: 'approved' });
     const rejectedTasks = await WorkItem.count({ status: 'rejected' });
 
-    res.json({
+    res.status(200).json({
       totalTasks,
       pendingTasks,
       submittedTasks,
@@ -410,4 +490,4 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = router;)

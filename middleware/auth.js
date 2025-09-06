@@ -1,4 +1,4 @@
-// Updated middleware/auth.js with better debugging
+// middleware/auth.js - Fixed version without problematic unicode characters
 const jwt = require('jsonwebtoken');
 
 const authenticateToken = (req, res, next) => {
@@ -16,7 +16,7 @@ const authenticateToken = (req, res, next) => {
   console.log('Extracted Token:', token ? 'Present' : 'Missing');
   
   if (!token) {
-    console.log('❌ No token provided');
+    console.log('ERROR: No token provided');
     return res.status(401).json({ 
       message: 'No token provided',
       debug: {
@@ -28,7 +28,7 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
-      console.log('❌ Token verification failed:', err.message);
+      console.log('ERROR: Token verification failed:', err.message);
       return res.status(403).json({ 
         message: 'Invalid token',
         debug: {
@@ -38,7 +38,7 @@ const authenticateToken = (req, res, next) => {
       });
     }
     
-    console.log('✅ Token verified for user:', user.email);
+    console.log('SUCCESS: Token verified for user:', user.email);
     req.user = user;
     next();
   });
@@ -49,10 +49,10 @@ const requireAdmin = (req, res, next) => {
   console.log('User role:', req.user?.role);
   
   if (req.user && req.user.role === 'admin') {
-    console.log('✅ Admin access granted');
+    console.log('SUCCESS: Admin access granted');
     next();
   } else {
-    console.log('❌ Admin access denied');
+    console.log('ERROR: Admin access denied');
     res.status(403).json({ 
       message: 'Admin access required',
       debug: {

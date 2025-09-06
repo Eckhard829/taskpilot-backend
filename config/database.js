@@ -4,12 +4,32 @@ const bcrypt = require('bcryptjs');
 
 // Create database connection with optimized settings
 const dbPath = path.join(__dirname, '../database.sqlite');
+console.log('Database path:', dbPath);
+
 const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
   if (err) {
     console.error('Error opening database:', err);
   } else {
-    console.log('Connected to SQLite database');
-    db.configure('busyTimeout', 5000);
+    console.log('Connected to SQLite database at:', dbPath);
+    db.configure('busyTimeout', 10000); // Increased timeout to 10 seconds
+    
+    // Enable foreign keys
+    db.run('PRAGMA foreign_keys = ON', (err) => {
+      if (err) {
+        console.error('Error enabling foreign keys:', err);
+      } else {
+        console.log('Foreign keys enabled');
+      }
+    });
+    
+    // Enable WAL mode for better concurrency
+    db.run('PRAGMA journal_mode = WAL', (err) => {
+      if (err) {
+        console.error('Error setting journal mode:', err);
+      } else {
+        console.log('WAL mode enabled');
+      }
+    });
   }
 });
 
@@ -74,9 +94,9 @@ const initializeDatabase = () => {
         reviewNotes TEXT,
         assignedBy INTEGER NOT NULL,
         reviewedBy INTEGER,
-        FOREIGN KEY (workerId) REFERENCES users (id),
-        FOREIGN KEY (assignedBy) REFERENCES users (id),
-        FOREIGN KEY (reviewedBy) REFERENCES users (id)
+        FOREIGN KEY (workerId) REFERENCES users (id) ON DELETE CASCADE,
+        FOREIGN KEY (assignedBy) REFERENCES users (id) ON DELETE CASCADE,
+        FOREIGN KEY (reviewedBy) REFERENCES users (id) ON DELETE SET NULL
       )
     `, (err) => {
       if (err) {
@@ -84,6 +104,7 @@ const initializeDatabase = () => {
       } else {
         console.log('Work items table ready');
         
+        // Check if additional columns exist and add them if they don't
         db.all("PRAGMA table_info(work_items)", (err, columns) => {
           if (!err) {
             const columnNames = columns.map(col => col.name);
@@ -95,6 +116,11 @@ const initializeDatabase = () => {
             if (!columnNames.includes('reviewNotes')) {
               db.run('ALTER TABLE work_items ADD COLUMN reviewNotes TEXT', (err) => {
                 if (!err) console.log('Added reviewNotes column to work_items');
+              });
+            }
+            if (!columnNames.includes('description')) {
+              db.run('ALTER TABLE work_items ADD COLUMN description TEXT DEFAULT ""', (err) => {
+                if (!err) console.log('Added description column to work_items');
               });
             }
           }
@@ -127,12 +153,20 @@ const initializeDatabase = () => {
   });
 };
 
-// Helper function to promisify database operations
+// Helper function to promisify database operations with better error handling
 const dbGet = (sql, params = []) => {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
+      if (err) {
+        console.error('Database GET error:', {
+          sql: sql.substring(0, 100) + '...',
+          params,
+          error: err.message
+        });
+        reject(err);
+      } else {
+        resolve(row);
+      }
     });
   });
 };
@@ -140,8 +174,16 @@ const dbGet = (sql, params = []) => {
 const dbAll = (sql, params = []) => {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
+      if (err) {
+        console.error('Database ALL error:', {
+          sql: sql.substring(0, 100) + '...',
+          params,
+          error: err.message
+        });
+        reject(err);
+      } else {
+        resolve(rows);
+      }
     });
   });
 };
@@ -149,16 +191,71 @@ const dbAll = (sql, params = []) => {
 const dbRun = (sql, params = []) => {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function(err) {
-      if (err) reject(err);
-      else resolve({ id: this.lastID, changes: this.changes });
+      if (err) {
+        console.error('Database RUN error:', {
+          sql: sql.substring(0, 100) + '...',
+          params,
+          error: err.message,
+          code: err.code
+        });
+        reject(err);
+      } else {
+        console.log('Database RUN success:', {
+          lastID: this.lastID,
+          changes: this.changes,
+          sql: sql.substring(0, 50) + '...'
+        });
+        resolve({ id: this.lastID, changes: this.changes });
+      }
     });
   });
 };
+
+// Add database health check function
+const checkDatabaseHealth = () => {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT 1 as test', [], (err, row) => {
+      if (err) {
+        console.error('Database health check failed:', err);
+        reject(err);
+      } else {
+        console.log('Database health check passed');
+        resolve(true);
+      }
+    });
+  });
+};
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Closing database connection...');
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err);
+    } else {
+      console.log('Database connection closed.');
+    }
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('Closing database connection...');
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err);
+    } else {
+      console.log('Database connection closed.');
+    }
+    process.exit(0);
+  });
+});
 
 module.exports = {
   db,
   dbGet,
   dbAll,
   dbRun,
-  initializeDatabase
+  initializeDatabase,
+  checkDatabaseHealth
 };
