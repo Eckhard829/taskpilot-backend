@@ -19,29 +19,55 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  
+  console.log('=== LOGIN ATTEMPT ===');
+  console.log('Email:', email);
+  console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
 
   try {
     const user = await User.findByEmail(email);
     if (!user) {
+      console.log('User not found:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    console.log('User found:', { id: user.id, email: user.email, role: user.role });
+
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      console.log('Password does not match for user:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     if (!user.isActive) {
+      console.log('User account is deactivated:', email);
       return res.status(403).json({ message: 'Account is deactivated' });
     }
 
     await user.updateLastLogin();
 
+    // Create JWT token with all necessary user information
+    const tokenPayload = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name
+    };
+
+    console.log('Creating token with payload:', tokenPayload);
+
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      tokenPayload,
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    console.log('Token created successfully');
+    console.log('Token starts with:', token.substring(0, 20) + '...');
+
+    // Verify the token was created correctly
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log('Token verification check - decoded payload:', decoded);
 
     res.json({
       token,
@@ -54,6 +80,10 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/register', authenticateToken, requireAdmin, async (req, res) => {
+  console.log('=== REGISTER ATTEMPT ===');
+  console.log('Request body:', req.body);
+  console.log('Authenticated user:', req.user);
+
   const { name, email, password, role } = req.body;
 
   try {
@@ -64,6 +94,8 @@ router.post('/register', authenticateToken, requireAdmin, async (req, res) => {
       password: hashedPassword,
       role
     });
+    
+    console.log('User created successfully:', user.toJSON());
     res.json({ user: user.toJSON() });
   } catch (error) {
     console.error('Registration error:', error);
@@ -72,11 +104,17 @@ router.post('/register', authenticateToken, requireAdmin, async (req, res) => {
 });
 
 router.get('/verify', authenticateToken, async (req, res) => {
+  console.log('=== TOKEN VERIFICATION ===');
+  console.log('User from token:', req.user);
+  
   try {
     const user = await User.findById(req.user.id);
     if (!user) {
+      console.log('User not found in database:', req.user.id);
       return res.status(404).json({ message: 'User not found' });
     }
+    
+    console.log('User verification successful:', user.toJSON());
     res.json({ user: user.toJSON() });
   } catch (error) {
     console.error('Verify error:', error);

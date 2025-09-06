@@ -6,8 +6,12 @@ const router = express.Router();
 
 // Get all users (Admin only) - Returns only workers
 router.get('/', authenticateToken, requireAdmin, async (req, res) => {
+  console.log('=== GET USERS ===');
+  console.log('Admin user:', req.user);
+  
   try {
     const users = await User.findAll({ role: 'worker' });
+    console.log(`Found ${users.length} worker users`);
     res.json(users.map(user => user.toJSON()));
   } catch (error) {
     console.error('Error fetching users:', error);

@@ -9,6 +9,16 @@ const workRoutes = require('./routes/work');
 
 const app = express();
 
+// Check if JWT_SECRET is set
+if (!process.env.JWT_SECRET) {
+  console.error('CRITICAL ERROR: JWT_SECRET is not set in environment variables');
+  console.error('Please set JWT_SECRET in your .env file');
+  process.exit(1);
+}
+
+console.log('JWT_SECRET is properly configured');
+console.log('JWT_SECRET length:', process.env.JWT_SECRET.length);
+
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.REACT_APP_FRONTEND_URL,
@@ -52,12 +62,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Initialize database
 initializeDatabase();
 
+// Email configuration
 let transporter = null;
 if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
   try {
-    transporter = nodemailer.createTransport({
+    transporter = nodemailer.createTransporter({
       service: process.env.EMAIL_SERVICE,
       auth: {
         user: process.env.EMAIL_USER,
@@ -87,10 +99,23 @@ if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PAS
   global.emailWorking = false;
 }
 
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/work', workRoutes);
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    jwt_configured: !!process.env.JWT_SECRET,
+    email_configured: !!global.transporter,
+    email_working: !!global.emailWorking
+  });
+});
+
+// 404 handler
 app.use('*', (req, res) => {
   console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
   res.status(404).json({ 
@@ -100,6 +125,7 @@ app.use('*', (req, res) => {
   });
 });
 
+// Error handler
 app.use((err, req, res, next) => {
   console.error('Server Error:', err);
   
@@ -127,7 +153,7 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Database: SQLite`);
-  console.log(`JWT Secret: ${process.env.JWT_SECRET ? 'Set' : 'MISSING'}`);
+  console.log(`JWT Secret: ${process.env.JWT_SECRET ? 'Set (' + process.env.JWT_SECRET.length + ' chars)' : 'MISSING'}`);
   console.log(`Email: ${global.transporter ? 'Configured' : 'Disabled'}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

@@ -1,4 +1,4 @@
-// routes/work.js - Complete file
+// routes/work.js - Complete file with fixes
 const express = require('express');
 const router = express.Router();
 const WorkItem = require('../models/WorkItem');
@@ -97,6 +97,9 @@ const createCalendarEvent = async (user, workItem) => {
 };
 
 router.get('/test', authenticateToken, (req, res) => {
+  console.log('=== WORK ROUTE TEST ===');
+  console.log('User from middleware:', req.user);
+  
   res.status(200).json({ 
     message: 'Backend is working',
     user: req.user,
@@ -105,13 +108,20 @@ router.get('/test', authenticateToken, (req, res) => {
 });
 
 router.get('/', authenticateToken, async (req, res) => {
+  console.log('=== GET WORK ITEMS ===');
+  console.log('User:', req.user);
+  
   try {
     let workItems;
     if (req.user.role === 'admin') {
+      console.log('Fetching all work items for admin');
       workItems = await WorkItem.findAll();
     } else {
+      console.log('Fetching work items for worker ID:', req.user.id);
       workItems = await WorkItem.findAll({ workerId: req.user.id });
     }
+    
+    console.log(`Found ${workItems.length} work items`);
     res.status(200).json(workItems);
   } catch (error) {
     console.error('Error fetching work items:', error);
@@ -120,8 +130,12 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
+  console.log('=== GET SUBMITTED WORK ===');
+  console.log('Admin user:', req.user);
+  
   try {
     const submittedWorkItems = await WorkItem.findAll({ status: 'submitted' });
+    console.log(`Found ${submittedWorkItems.length} submitted work items`);
     res.status(200).json(submittedWorkItems);
   } catch (error) {
     console.error('Error fetching submitted work items:', error);
@@ -164,13 +178,19 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
+  console.log('=== TASK ASSIGNMENT ===');
+  console.log('Request body:', req.body);
+  console.log('Admin user:', req.user);
+  
   try {
     const { workerId, task, description, instructions, deadline } = req.body;
 
     if (!workerId || !task || !instructions || !deadline) {
+      console.log('Missing required fields:', { workerId, task: !!task, instructions: !!instructions, deadline: !!deadline });
       return res.status(400).json({ message: 'WorkerId, task, instructions, and deadline are required' });
     }
 
+    console.log('Creating work item...');
     const workItem = await WorkItem.create({
       workerId,
       task,
@@ -181,8 +201,11 @@ router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
       status: 'pending'
     });
 
+    console.log('Work item created successfully:', workItem.id);
+
     const worker = await User.findById(workerId);
     if (worker) {
+      console.log('Sending notification to worker:', worker.email);
       const deadlineDate = new Date(deadline);
       
       await sendTaskNotification(
@@ -208,12 +231,14 @@ TaskPilot Team`
       await createCalendarEvent(worker, workItem);
     }
 
+    console.log('Task assignment completed successfully');
     res.status(201).json({
       message: 'Task assigned successfully',
       workItem: workItem.toJSON()
     });
   } catch (error) {
     console.error('Error assigning task:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
