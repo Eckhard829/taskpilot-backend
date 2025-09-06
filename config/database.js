@@ -71,6 +71,16 @@ const initializeDatabase = () => {
       }
     });
 
+    // First drop the existing table
+    db.run('DROP TABLE IF EXISTS work_items', (err) => {
+      if (err) {
+        console.error('Error dropping work_items table:', err);
+      } else {
+        console.log('Dropped existing work_items table');
+      }
+    });
+
+    // Then recreate with correct schema
     db.run(`
       CREATE TABLE IF NOT EXISTS work_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,28 +106,7 @@ const initializeDatabase = () => {
       if (err) {
         console.error('Error creating work_items table:', err);
       } else {
-        console.log('Work items table ready');
-        
-        db.all("PRAGMA table_info(work_items)", (err, columns) => {
-          if (!err) {
-            const columnNames = columns.map(col => col.name);
-            if (!columnNames.includes('workLink')) {
-              db.run('ALTER TABLE work_items ADD COLUMN workLink TEXT', (err) => {
-                if (!err) console.log('Added workLink column to work_items');
-              });
-            }
-            if (!columnNames.includes('reviewNotes')) {
-              db.run('ALTER TABLE work_items ADD COLUMN reviewNotes TEXT', (err) => {
-                if (!err) console.log('Added reviewNotes column to work_items');
-              });
-            }
-            if (!columnNames.includes('description')) {
-              db.run('ALTER TABLE work_items ADD COLUMN description TEXT DEFAULT ""', (err) => {
-                if (!err) console.log('Added description column to work_items');
-              });
-            }
-          }
-        });
+        console.log('Work items table recreated with correct schema');
       }
     });
 
@@ -210,7 +199,6 @@ const checkDatabaseHealth = () => {
         reject(err);
       } else {
         console.log('Database health check passed');
-        resolve(true);
       }
     });
   });
