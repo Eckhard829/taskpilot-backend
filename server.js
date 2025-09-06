@@ -22,7 +22,8 @@ console.log('JWT_SECRET length:', process.env.JWT_SECRET.length);
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.REACT_APP_FRONTEND_URL,
-  'https://taskpillot.netlify.app',
+  'https://taskpillot.netlify.app', // Fixed: Added the correct domain with double 'l'
+  'https://taskpilot.netlify.app',   // Keep the old one in case you switch back
   'http://localhost:3000',
   'http://localhost:3001'
 ].filter(Boolean);
@@ -31,8 +32,14 @@ console.log('Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
+    console.log('CORS check - Request origin:', origin);
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list or contains netlify.app
     if (allowedOrigins.includes(origin) || origin.includes('netlify.app')) {
+      console.log('CORS allowed for origin:', origin);
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
@@ -46,12 +53,17 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
+// Handle preflight OPTIONS requests explicitly
 app.options('*', cors());
 
+// Additional manual CORS headers for extra safety
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  console.log('Manual CORS header check - Origin:', origin);
+  
   if (allowedOrigins.includes(origin) || (origin && origin.includes('netlify.app'))) {
     res.header('Access-Control-Allow-Origin', origin);
+    console.log('Manual CORS header set for origin:', origin);
   }
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -132,7 +144,8 @@ app.use((err, req, res, next) => {
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ 
       message: 'CORS error - origin not allowed',
-      origin: req.headers.origin
+      origin: req.headers.origin,
+      allowedOrigins: allowedOrigins
     });
   }
   
@@ -156,6 +169,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`JWT Secret: ${process.env.JWT_SECRET ? 'Set (' + process.env.JWT_SECRET.length + ' chars)' : 'MISSING'}`);
   console.log(`Email: ${global.transporter ? 'Configured' : 'Disabled'}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Allowed CORS Origins:`, allowedOrigins);
 });
 
 process.on('SIGTERM', () => {
