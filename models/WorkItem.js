@@ -19,7 +19,6 @@ class WorkItem {
     this.reviewedBy = data.reviewedBy;
   }
 
-  // Create a new work item
   static async create(workItemData) {
     const { 
       workerId, 
@@ -31,22 +30,18 @@ class WorkItem {
       status = 'pending' 
     } = workItemData;
 
-    // Validate task length
     if (task.length > 200) {
       throw new Error('Task cannot be longer than 200 characters');
     }
 
-    // Validate required fields
     if (!workerId || !task || !instructions || !deadline || !assignedBy) {
       throw new Error('All required fields must be provided');
     }
 
-    // Validate status
     if (!['pending', 'submitted', 'approved', 'rejected'].includes(status)) {
       throw new Error('Status must be pending, submitted, approved, or rejected');
     }
 
-    // Validate URL if provided
     if (workItemData.workLink) {
       const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
       if (!urlRegex.test(workItemData.workLink)) {
@@ -67,7 +62,6 @@ class WorkItem {
     }
   }
 
-  // Find work item by ID with populated user data
   static async findById(id) {
     try {
       const row = await dbGet(`
@@ -85,7 +79,6 @@ class WorkItem {
       if (!row) return null;
 
       const workItem = new WorkItem(row);
-      // Add populated data
       workItem.worker = { id: row.workerId, name: row.workerName, email: row.workerEmail };
       workItem.assignedByUser = { id: row.assignedBy, name: row.assignedByName, email: row.assignedByEmail };
       if (row.reviewedBy) {
@@ -99,7 +92,6 @@ class WorkItem {
     }
   }
 
-  // Find all work items with optional filters
   static async findAll(filters = {}) {
     try {
       let sql = `
@@ -135,7 +127,6 @@ class WorkItem {
       const rows = await dbAll(sql, params);
       return rows.map(row => {
         const workItem = new WorkItem(row);
-        // Add populated data
         workItem.worker = { id: row.workerId, name: row.workerName, email: row.workerEmail };
         workItem.assignedByUser = { id: row.assignedBy, name: row.assignedByName, email: row.assignedByEmail };
         if (row.reviewedBy) {
@@ -149,7 +140,6 @@ class WorkItem {
     }
   }
 
-  // Count work items
   static async count(filters = {}) {
     try {
       let sql = 'SELECT COUNT(*) as count FROM work_items WHERE 1=1';
@@ -173,7 +163,6 @@ class WorkItem {
     }
   }
 
-  // Update work item
   async update(updateData) {
     try {
       const allowedFields = ['task', 'description', 'instructions', 'deadline', 'status', 'submittedAt', 'reviewedAt', 'explanation', 'workLink', 'reviewNotes', 'reviewedBy'];
@@ -196,7 +185,6 @@ class WorkItem {
 
       await dbRun(`UPDATE work_items SET ${updates.join(', ')} WHERE id = ?`, params);
       
-      // Refresh the instance
       const updated = await WorkItem.findById(this.id);
       Object.assign(this, updated);
       return this;
@@ -206,7 +194,6 @@ class WorkItem {
     }
   }
 
-  // Delete work item
   async delete() {
     try {
       await dbRun('DELETE FROM work_items WHERE id = ?', [this.id]);
@@ -216,15 +203,12 @@ class WorkItem {
     }
   }
 
-  // IMPROVED Mark as completed/submitted with better error handling
   async markCompleted(completionData = {}) {
-    console.log('=== WorkItem.markCompleted called ===');
+    console.log('WorkItem.markCompleted called');
     console.log('Task ID:', this.id);
-    console.log('Current status:', this.status);
     console.log('Completion data:', completionData);
     
     try {
-      // Validate completion data
       if (!completionData.explanation || !completionData.explanation.trim()) {
         throw new Error('Explanation is required to mark task as completed');
       }
@@ -236,22 +220,17 @@ class WorkItem {
         workLink: completionData.workLink || null
       };
 
-      console.log('Update data prepared:', updateData);
-      console.log('Calling this.update...');
-
+      console.log('Calling this.update with:', updateData);
       const result = await this.update(updateData);
-      
-      console.log('✅ WorkItem.markCompleted successful');
+      console.log('markCompleted successful');
       return result;
       
     } catch (error) {
-      console.error('❌ Error in WorkItem.markCompleted:', error);
-      console.error('Error stack:', error.stack);
+      console.error('Error in WorkItem.markCompleted:', error);
       throw new Error(`Failed to mark task as completed: ${error.message}`);
     }
   }
 
-  // Approve work item
   async approve(reviewData = {}) {
     try {
       const updateData = {
@@ -268,7 +247,6 @@ class WorkItem {
     }
   }
 
-  // Reject work item
   async reject(reviewData) {
     try {
       if (!reviewData.reviewNotes) {
@@ -280,7 +258,6 @@ class WorkItem {
         reviewedAt: new Date().toISOString(),
         reviewNotes: reviewData.reviewNotes,
         reviewedBy: reviewData.reviewedBy,
-        // Clear submission data when rejecting
         submittedAt: null,
         explanation: null,
         workLink: null
@@ -293,27 +270,22 @@ class WorkItem {
     }
   }
 
-  // Check if overdue
   isOverdue() {
     return new Date(this.deadline) < new Date() && ['pending', 'rejected'].includes(this.status);
   }
 
-  // Check if submitted
   isSubmitted() {
     return this.status === 'submitted';
   }
 
-  // Check if approved
   isApproved() {
     return this.status === 'approved';
   }
 
-  // Check if rejected
   isRejected() {
     return this.status === 'rejected';
   }
 
-  // Convert to JSON
   toJSON() {
     return {
       id: this.id,

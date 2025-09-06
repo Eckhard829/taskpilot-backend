@@ -4,12 +4,9 @@ const WorkItem = require('../models/WorkItem');
 const User = require('../models/User');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { google } = require('googleapis');
-const nodemailer = require('nodemailer');
 const { dbGet } = require('../config/database');
 
-// IMPROVED EMAIL NOTIFICATION FUNCTION
 const sendTaskNotification = async (to, subject, text) => {
-  // Check if global transporter exists and is working
   if (!global.transporter) {
     console.log('Email not configured - skipping notification to:', to);
     return { success: false, reason: 'Email not configured' };
@@ -36,7 +33,6 @@ const sendTaskNotification = async (to, subject, text) => {
 };
 
 const createCalendarEvent = async (user, workItem) => {
-  // Check if user has Google OAuth tokens
   const userTokens = await dbGet(
     'SELECT googleAccessToken, googleRefreshToken FROM users WHERE id = ?',
     [user.id]
@@ -91,7 +87,6 @@ const createCalendarEvent = async (user, workItem) => {
       resource: event,
     });
     console.log(`Calendar event created for task ${workItem.id} for user ${user.email}`);
-    console.log('Event link:', response.data.htmlLink);
   } catch (error) {
     console.error('Error creating calendar event:', error.message);
     if (error.code === 401) {
@@ -100,7 +95,6 @@ const createCalendarEvent = async (user, workItem) => {
   }
 };
 
-// Get all work items for current user (Worker can see their own, Admin can see all)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     let workItems;
@@ -116,7 +110,6 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get submitted work items for review (Admin only)
 router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const submittedWorkItems = await WorkItem.findAll({ status: 'submitted' });
@@ -127,7 +120,6 @@ router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Get work items for a specific worker
 router.get('/worker/:workerId', authenticateToken, async (req, res) => {
   try {
     const workerId = parseInt(req.params.workerId);
@@ -144,7 +136,6 @@ router.get('/worker/:workerId', authenticateToken, async (req, res) => {
   }
 });
 
-// Get work item by ID
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const workItem = await WorkItem.findById(req.params.id);
@@ -163,7 +154,6 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Create a new work task (Admin only)
 router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { workerId, task, description, instructions, deadline } = req.body;
@@ -186,7 +176,6 @@ router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
     if (worker) {
       const deadlineDate = new Date(deadline);
       
-      // Send email notification
       await sendTaskNotification(
         worker.email,
         'New Task Assigned - TaskPilot',
@@ -207,7 +196,6 @@ Best regards,
 TaskPilot Team`
       );
 
-      // Create Google Calendar event
       await createCalendarEvent(worker, workItem);
     }
 
@@ -221,105 +209,52 @@ TaskPilot Team`
   }
 });
 
-// FIXED COMPLETION ROUTE - THIS IS THE CRITICAL FIX
 router.put('/complete/:id', authenticateToken, async (req, res) => {
-  console.log('=== TASK COMPLETION REQUEST DEBUG ===');
+  console.log('=== TASK COMPLETION REQUEST ===');
   console.log('Task ID:', req.params.id);
-  console.log('User ID:', req.user?.id);
-  console.log('User Role:', req.user?.role);
-  console.log('Request Body:', req.body);
-  console.log('Global transporter exists:', !!global.transporter);
-  console.log('Email working:', global.emailWorking);
+  console.log('User:', req.user);
+  console.log('Body:', req.body);
   
   try {
     const { explanation, workLink } = req.body;
     
-    // Validate input
     if (!explanation || !explanation.trim()) {
-      console.log('❌ Validation failed: Missing explanation');
-      return res.status(400).json({ 
-        message: 'Explanation is required',
-        field: 'explanation'
-      });
+      return res.status(400).json({ message: 'Explanation is required' });
     }
-    
-    console.log('✅ Input validation passed');
-    console.log('Finding work item...');
     
     const workItem = await WorkItem.findById(req.params.id);
 
     if (!workItem) {
-      console.log('❌ Work item not found');
       return res.status(404).json({ message: 'Work item not found' });
     }
 
-    console.log('✅ Work item found:', {
-      id: workItem.id,
-      status: workItem.status,
-      workerId: workItem.workerId,
-      requestingUserId: req.user.id
-    });
-
-    // Check permissions
     if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
-      console.log('❌ Access denied - user not authorized');
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    console.log('✅ Permission check passed');
-
-    // Check status
     if (workItem.status === 'submitted' || workItem.status === 'approved') {
-      console.log('❌ Task already completed or under review');
-      return res.status(400).json({ 
-        message: 'Task is already completed or under review',
-        currentStatus: workItem.status
-      });
+      return res.status(400).json({ message: 'Task is already completed or under review' });
     }
 
-    console.log('✅ Status check passed');
-    console.log('Attempting to mark task as completed...');
-    
-    // Use the improved markCompleted method
-    const completionData = {
-      explanation: explanation.trim(),
-      workLink: workLink?.trim() || null
-    };
-    
-    console.log('Completion data:', completionData);
-    
-    await workItem.markCompleted(completionData);
+    await workItem.markCompleted({ 
+      explanation: explanation.trim(), 
+      workLink: workLink?.trim() || null 
+    });
 
-    console.log('✅ Task marked as completed successfully');
-    
-    // Send success response
     res.json({
       message: 'Task submitted for review successfully',
       workItem: workItem.toJSON()
     });
     
-    console.log('✅ Response sent successfully');
-    
   } catch (error) {
-    console.error('❌ ERROR in task completion route:');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('Error name:', error.name);
-    
-    // Send detailed error response
+    console.error('Error completing task:', error);
     res.status(500).json({ 
       message: 'Server error while completing task',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? {
-        stack: error.stack,
-        name: error.name,
-        code: error.code
-      } : undefined
+      error: error.message
     });
   }
 });
 
-// Approve work item (Admin only)
 router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { reviewNotes } = req.body;
@@ -366,7 +301,6 @@ TaskPilot Team`
   }
 });
 
-// Reject work item (Admin only)
 router.put('/reject/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { reviewNotes } = req.body;
@@ -420,7 +354,6 @@ TaskPilot Team`
   }
 });
 
-// Update work item (Admin only)
 router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const workItem = await WorkItem.findById(req.params.id);
@@ -440,7 +373,6 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete work item (Admin only)
 router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const workItem = await WorkItem.findById(req.params.id);
@@ -457,7 +389,6 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Get work statistics (Admin only)
 router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const totalTasks = await WorkItem.count();
