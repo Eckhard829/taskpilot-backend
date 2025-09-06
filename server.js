@@ -9,9 +9,9 @@ const workRoutes = require('./routes/work');
 
 const app = express();
 
-// CORS Configuration - Updated for Netlify + Render
+// CORS Configuration - Updated for proper handling
 const allowedOrigins = [
-  process.env.FRONTEND_URL, 
+  process.env.FRONTEND_URL,
   process.env.REACT_APP_FRONTEND_URL,
   'https://taskpillot.netlify.app',
   'http://localhost:3000',
@@ -22,12 +22,11 @@ console.log('Allowed CORS origins:', allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (like server-to-server requests)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.some(allowedOrigin => {
-      return origin === allowedOrigin || 
-             (allowedOrigin.includes('netlify.app') && origin.includes('netlify.app'));
-    })) {
+
+    // Check if origin is allowed
+    if (allowedOrigins.includes(origin) || origin.includes('netlify.app')) {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
@@ -37,11 +36,20 @@ app.use(cors({
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
+// Explicitly handle OPTIONS requests for all routes
+app.options('*', cors());
+
+// Additional CORS headers for all responses
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin) || (origin && origin.includes('netlify.app'))) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -54,75 +62,17 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Initialize SQLite Database
 initializeDatabase();
 
-// Email Configuration - FIXED: createTransport not createTransporter
+// Email Configuration
 let transporter = null;
 if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  try {
-    transporter = nodemailer.createTransport({  // FIXED: was createTransporter
-      service: process.env.EMAIL_SERVICE,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      pool: true,
-      maxConnections: 5,
-      maxMessages: 10,
-    });
-
-    transporter.verify((error, success) => {
-      if (error) {
-        console.error('Email configuration error:', error);
-      } else {
-        console.log('Email service ready');
-      }
-    });
-  } catch (error) {
-    console.error('Email transporter setup failed:', error.message);
-  }
-} else {
-  console.log('Email not configured - notifications disabled');
-}
-
-app.set('transporter', transporter);
-global.transporter = transporter;
-
-// Environment check endpoint
-app.get('/api/env-check', (req, res) => {
-  res.json({
-    nodeEnv: process.env.NODE_ENV,
-    hasJwtSecret: !!process.env.JWT_SECRET,
-    hasEmailConfig: !!(process.env.EMAIL_SERVICE && process.env.EMAIL_USER),
-    frontendUrl: process.env.FRONTEND_URL || process.env.REACT_APP_FRONTEND_URL,
-    allowedOrigins: allowedOrigins,
-    timestamp: new Date().toISOString()
+  transporter = nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
   });
-});
-
-// Health check endpoint
-app.get('/api/health', async (req, res) => {
-  try {
-    await new Promise((resolve, reject) => {
-      db.get('SELECT 1', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-    
-    res.json({ 
-      status: 'OK', 
-      database: 'Connected',
-      environment: process.env.NODE_ENV || 'development',
-      timestamp: new Date().toISOString() 
-    });
-  } catch (error) {
-    console.error('Health check failed:', error);
-    res.status(500).json({ 
-      status: 'ERROR', 
-      message: 'Database connection failed',
-      error: error.message
-    });
-  }
-});
+}
 
 // Routes
 app.use('/api/auth', authRoutes);
