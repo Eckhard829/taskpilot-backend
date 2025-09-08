@@ -123,14 +123,25 @@ router.get('/verify', authenticateToken, async (req, res) => {
 });
 
 // Google OAuth Routes
-router.get('/google', authenticateToken, (req, res) => {
+router.get('/google', async (req, res) => {
   if (!oauth2Client) {
     return res.status(500).json({ message: 'Google OAuth not configured' });
   }
 
   try {
+    // Get token from query parameter or Authorization header
+    const token = req.query.token || (req.headers.authorization && req.headers.authorization.replace('Bearer ', ''));
+    
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Create temporary token for OAuth state
     const tempToken = jwt.sign(
-      { userId: req.user.id, type: 'oauth_temp' },
+      { userId: decoded.id, type: 'oauth_temp' },
       process.env.JWT_SECRET,
       { expiresIn: '10m' }
     );
@@ -144,6 +155,11 @@ router.get('/google', authenticateToken, (req, res) => {
     res.redirect(url);
   } catch (error) {
     console.error('Error generating Google OAuth URL:', error);
+    
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    
     res.status(500).json({ message: 'Failed to generate OAuth URL' });
   }
 });
