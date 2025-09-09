@@ -168,7 +168,7 @@ router.get('/google/callback', async (req, res) => {
   const { code, state } = req.query;
 
   if (!oauth2Client) {
-    return res.redirect(`${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error&reason=not_configured`);
+    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error&reason=not_configured`);
   }
 
   try {
@@ -191,16 +191,18 @@ router.get('/google/callback', async (req, res) => {
       [tokens.access_token, tokens.refresh_token, userId]
     );
 
+    // FIXED: Use FRONTEND_URL instead of REACT_APP_FRONTEND_URL
     const redirectUrl = user.role === 'admin' 
-      ? `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}/admin`
-      : `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}/worker`;
+      ? `${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin`
+      : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/worker`;
     
     res.redirect(`${redirectUrl}?googleAuth=success`);
     
   } catch (error) {
     console.error('Error in Google OAuth callback:', error);
     
-    const errorRedirectUrl = `${process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`;
+    // FIXED: Use FRONTEND_URL instead of REACT_APP_FRONTEND_URL
+    const errorRedirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`;
     res.redirect(errorRedirectUrl);
   }
 });
