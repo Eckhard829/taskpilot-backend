@@ -1,5 +1,6 @@
 // db-manager.js
 const { db } = require('./config/database');
+const bcrypt = require('bcryptjs');
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -26,7 +27,6 @@ switch (command) {
       return;
     }
     
-    // First check if user exists
     db.get('SELECT id, name, email, role FROM users WHERE id = ?', [userId], (err, user) => {
       if (err) {
         console.error('Error:', err);
@@ -42,34 +42,57 @@ switch (command) {
       
       console.log(`Found user: ${user.name} (${user.email}) - ${user.role}`);
       
-      // Delete the user
-      db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
+      db.run('BEGIN TRANSACTION');
+      db.run('DELETE FROM work_items WHERE workerId = ?', [userId], function(err) {
         if (err) {
-          console.error('Error deleting user:', err);
+          console.error('Error deleting user tasks:', err);
+          db.run('ROLLBACK');
+          db.close();
+          return;
+        }
+        
+        db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
+          if (err) {
+            console.error('Error deleting user:', err);
+            db.run('ROLLBACK');
+          } else {
+            console.log(`Successfully deleted user with ID ${userId}`);
+            db.run('COMMIT');
+          }
+          db.close();
+        });
+      });
+    });
+    break;
+
+  case 'delete-all-workers':
+    db.run('BEGIN TRANSACTION');
+    db.run('DELETE FROM work_items WHERE workerId IN (SELECT id FROM users WHERE role = "worker")', function(err) {
+      if (err) {
+        console.error('Error deleting worker tasks:', err);
+        db.run('ROLLBACK');
+        db.close();
+        return;
+      }
+      
+      db.run('DELETE FROM users WHERE role = "worker"', function(err) {
+        if (err) {
+          console.error('Error deleting workers:', err);
+          db.run('ROLLBACK');
         } else {
-          console.log(`Successfully deleted user with ID ${userId}`);
+          console.log(`Deleted ${this.changes} worker account(s)`);
+          db.run('COMMIT');
         }
         db.close();
       });
     });
     break;
 
-  case 'delete-all-workers':
-    db.run('DELETE FROM users WHERE role = "worker"', function(err) {
-      if (err) {
-        console.error('Error:', err);
-      } else {
-        console.log(`Deleted ${this.changes} worker account(s)`);
-      }
-      db.close();
-    });
-    break;
-
   case 'reset-admin':
-    const bcrypt = require('bcryptjs');
     const resetAdmin = async () => {
       try {
         const hashedPassword = await bcrypt.hash('admin123', 10);
+        db.run('BEGIN TRANSACTION');
         db.run(`
           UPDATE users 
           SET password = ?, name = 'Admin' 
@@ -77,15 +100,19 @@ switch (command) {
         `, [hashedPassword], function(err) {
           if (err) {
             console.error('Error:', err);
+            db.run('ROLLBACK');
           } else if (this.changes > 0) {
             console.log('Admin password reset to: admin123');
+            db.run('COMMIT');
           } else {
             console.log('No admin user found to reset');
+            db.run('ROLLBACK');
           }
           db.close();
         });
       } catch (error) {
         console.error('Error hashing password:', error);
+        db.run('ROLLBACK');
         db.close();
       }
     };
@@ -110,7 +137,6 @@ Usage Examples:
     db.close();
 }
 
-// Handle cleanup on exit
 process.on('SIGINT', () => {
   db.close();
   process.exit();
