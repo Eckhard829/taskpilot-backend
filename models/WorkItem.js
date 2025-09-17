@@ -1,4 +1,4 @@
-// models/WorkItem.js
+// models/WorkItem.js - Complete file
 const { dbGet, dbAll, dbRun } = require('../config/database');
 
 class WorkItem {
@@ -18,9 +18,6 @@ class WorkItem {
     this.reviewNotes = data.reviewNotes;
     this.assignedBy = data.assignedBy;
     this.reviewedBy = data.reviewedBy;
-    this.worker = data.worker;
-    this.assignedByUser = data.assignedByUser;
-    this.reviewedByUser = data.reviewedByUser;
   }
 
   static async create(workItemData) {
@@ -46,11 +43,6 @@ class WorkItem {
       throw new Error('Status must be pending, submitted, approved, or rejected');
     }
 
-    const assignedByUser = await dbGet('SELECT id FROM users WHERE id = ?', [assignedBy]);
-    if (!assignedByUser) {
-      throw new Error('Invalid assignedBy user ID');
-    }
-
     if (workItemData.workLink) {
       const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
       if (!urlRegex.test(workItemData.workLink)) {
@@ -58,173 +50,219 @@ class WorkItem {
       }
     }
 
-    await dbRun('BEGIN TRANSACTION');
     try {
       const result = await dbRun(`
         INSERT INTO work_items (workerId, task, description, instructions, deadline, status, assignedBy)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `, [workerId, task.trim(), description.trim(), instructions.trim(), deadline, status, assignedBy]);
 
-      await dbRun('COMMIT');
       return await WorkItem.findById(result.id);
     } catch (error) {
-      await dbRun('ROLLBACK');
       console.error('Database error in WorkItem.create:', error);
-      throw error;
+      throw new Error(`Failed to create work item: ${error.message}`);
     }
   }
 
   static async findById(id) {
-    const row = await dbGet(`
-      SELECT w.*, 
-             u1.name AS worker_name, u1.email AS worker_email,
-             u2.name AS assigned_by_name, u2.email AS assigned_by_email,
-             u3.name AS reviewed_by_name, u3.email AS reviewed_by_email
-      FROM work_items w
-      LEFT JOIN users u1 ON w.workerId = u1.id
-      LEFT JOIN users u2 ON w.assignedBy = u2.id
-      LEFT JOIN users u3 ON w.reviewedBy = u3.id
-      WHERE w.id = ?
-    `, [id]);
+    try {
+      const row = await dbGet(`
+        SELECT wi.*, 
+               u1.name as workerName, u1.email as workerEmail,
+               u2.name as assignedByName, u2.email as assignedByEmail,
+               u3.name as reviewedByName, u3.email as reviewedByEmail
+        FROM work_items wi
+        LEFT JOIN users u1 ON wi.workerId = u1.id
+        LEFT JOIN users u2 ON wi.assignedBy = u2.id
+        LEFT JOIN users u3 ON wi.reviewedBy = u3.id
+        WHERE wi.id = ?
+      `, [id]);
+      
+      if (!row) return null;
 
-    if (!row) return null;
-
-    return new WorkItem({
-      ...row,
-      worker: row.worker_name ? { name: row.worker_name, email: row.worker_email } : null,
-      assignedByUser: row.assigned_by_name ? { name: row.assigned_by_name, email: row.assigned_by_email } : null,
-      reviewedByUser: row.reviewed_by_name ? { name: row.reviewed_by_name, email: row.reviewed_by_email } : null
-    });
+      const workItem = new WorkItem(row);
+      workItem.worker = { id: row.workerId, name: row.workerName, email: row.workerEmail };
+      workItem.assignedByUser = { id: row.assignedBy, name: row.assignedByName, email: row.assignedByEmail };
+      if (row.reviewedBy) {
+        workItem.reviewedByUser = { id: row.reviewedBy, name: row.reviewedByName, email: row.reviewedByEmail };
+      }
+      
+      return workItem;
+    } catch (error) {
+      console.error('Database error in WorkItem.findById:', error);
+      throw new Error(`Failed to find work item: ${error.message}`);
+    }
   }
 
   static async findAll(filters = {}) {
-    let sql = `
-      SELECT w.*, 
-             u1.name AS worker_name, u1.email AS worker_email,
-             u2.name AS assigned_by_name, u2.email AS assigned_by_email,
-             u3.name AS reviewed_by_name, u3.email AS reviewed_by_email
-      FROM work_items w
-      LEFT JOIN users u1 ON w.workerId = u1.id
-      LEFT JOIN users u2 ON w.assignedBy = u2.id
-      LEFT JOIN users u3 ON w.reviewedBy = u3.id
-      WHERE 1=1
-    `;
-    const params = [];
+    try {
+      let sql = `
+        SELECT wi.*, 
+               u1.name as workerName, u1.email as workerEmail,
+               u2.name as assignedByName, u2.email as assignedByEmail,
+               u3.name as reviewedByName, u3.email as reviewedByEmail
+        FROM work_items wi
+        LEFT JOIN users u1 ON wi.workerId = u1.id
+        LEFT JOIN users u2 ON wi.assignedBy = u2.id
+        LEFT JOIN users u3 ON wi.reviewedBy = u3.id
+        WHERE 1=1
+      `;
+      const params = [];
 
-    if (filters.workerId) {
-      sql += ' AND w.workerId = ?';
-      params.push(filters.workerId);
-    }
-    if (filters.status) {
-      sql += ' AND w.status = ?';
-      params.push(filters.status);
-    }
+      if (filters.workerId) {
+        sql += ' AND wi.workerId = ?';
+        params.push(filters.workerId);
+      }
 
-    const rows = await dbAll(sql, params);
-    return rows.map(row => new WorkItem({
-      ...row,
-      worker: row.worker_name ? { name: row.worker_name, email: row.worker_email } : null,
-      assignedByUser: row.assigned_by_name ? { name: row.assigned_by_name, email: row.assigned_by_email } : null,
-      reviewedByUser: row.reviewed_by_name ? { name: row.reviewed_by_name, email: row.reviewed_by_email } : null
-    }));
+      if (filters.status) {
+        sql += ' AND wi.status = ?';
+        params.push(filters.status);
+      }
+
+      if (filters.assignedBy) {
+        sql += ' AND wi.assignedBy = ?';
+        params.push(filters.assignedBy);
+      }
+
+      sql += ' ORDER BY wi.assignedAt DESC';
+
+      const rows = await dbAll(sql, params);
+      return rows.map(row => {
+        const workItem = new WorkItem(row);
+        workItem.worker = { id: row.workerId, name: row.workerName, email: row.workerEmail };
+        workItem.assignedByUser = { id: row.assignedBy, name: row.assignedByName, email: row.assignedByEmail };
+        if (row.reviewedBy) {
+          workItem.reviewedByUser = { id: row.reviewedBy, name: row.reviewedByName, email: row.reviewedByEmail };
+        }
+        return workItem;
+      });
+    } catch (error) {
+      console.error('Database error in WorkItem.findAll:', error);
+      throw new Error(`Failed to find work items: ${error.message}`);
+    }
   }
 
   static async count(filters = {}) {
-    let sql = 'SELECT COUNT(*) as count FROM work_items WHERE 1=1';
-    const params = [];
+    try {
+      let sql = 'SELECT COUNT(*) as count FROM work_items WHERE 1=1';
+      const params = [];
 
-    if (filters.status) {
-      sql += ' AND status = ?';
-      params.push(filters.status);
-    }
-    if (filters.workerId) {
-      sql += ' AND workerId = ?';
-      params.push(filters.workerId);
-    }
+      if (filters.status) {
+        sql += ' AND status = ?';
+        params.push(filters.status);
+      }
 
-    const result = await dbGet(sql, params);
-    return result.count;
+      if (filters.workerId) {
+        sql += ' AND workerId = ?';
+        params.push(filters.workerId);
+      }
+
+      const result = await dbGet(sql, params);
+      return result.count;
+    } catch (error) {
+      console.error('Database error in WorkItem.count:', error);
+      throw new Error(`Failed to count work items: ${error.message}`);
+    }
   }
 
   async update(updateData) {
-    const allowedFields = [
-      'task', 'description', 'instructions', 'deadline', 'status',
-      'submittedAt', 'reviewedAt', 'explanation', 'workLink', 'reviewNotes', 'reviewedBy'
-    ];
-    const updates = [];
-    const params = [];
-
-    for (const [key, value] of Object.entries(updateData)) {
-      if (allowedFields.includes(key)) {
-        updates.push(`${key} = ?`);
-        params.push(value);
-      }
-    }
-
-    if (updates.length === 0) {
-      throw new Error('No valid fields to update');
-    }
-
-    params.push(this.id);
-
-    await dbRun('BEGIN TRANSACTION');
     try {
+      const allowedFields = ['task', 'description', 'instructions', 'deadline', 'status', 'submittedAt', 'reviewedAt', 'explanation', 'workLink', 'reviewNotes', 'reviewedBy'];
+      const updates = [];
+      const params = [];
+
+      for (const [key, value] of Object.entries(updateData)) {
+        if (allowedFields.includes(key) && value !== undefined) {
+          updates.push(`${key} = ?`);
+          params.push(key === 'task' || key === 'description' || key === 'instructions' || key === 'explanation' || key === 'reviewNotes' ? 
+            (value ? value.trim() : value) : value);
+        }
+      }
+
+      if (updates.length === 0) {
+        throw new Error('No valid fields to update');
+      }
+
+      params.push(this.id);
+
       await dbRun(`UPDATE work_items SET ${updates.join(', ')} WHERE id = ?`, params);
-      await dbRun('COMMIT');
       
       const updated = await WorkItem.findById(this.id);
       Object.assign(this, updated);
       return this;
     } catch (error) {
-      await dbRun('ROLLBACK');
-      throw error;
+      console.error('Database error in WorkItem.update:', error);
+      throw new Error(`Failed to update work item: ${error.message}`);
     }
   }
 
   async delete() {
-    await dbRun('BEGIN TRANSACTION');
     try {
       await dbRun('DELETE FROM work_items WHERE id = ?', [this.id]);
-      await dbRun('COMMIT');
     } catch (error) {
-      await dbRun('ROLLBACK');
-      throw error;
+      console.error('Database error in WorkItem.delete:', error);
+      throw new Error(`Failed to delete work item: ${error.message}`);
     }
   }
 
-  async complete(completionData) {
-    const { explanation, workLink } = completionData;
-    if (!explanation) {
-      throw new Error('Explanation is required for task completion');
-    }
-
-    if (workLink) {
-      const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
-      if (!urlRegex.test(workLink)) {
-        throw new Error('Please provide a valid URL');
-      }
-    }
-
-    await dbRun('BEGIN TRANSACTION');
+  async markCompleted(completionData = {}) {
+    console.log('WorkItem.markCompleted called');
+    console.log('Task ID:', this.id);
+    console.log('Completion data:', completionData);
+    
     try {
+      if (!completionData.explanation || !completionData.explanation.trim()) {
+        throw new Error('Explanation is required to mark task as completed');
+      }
+
+      if (completionData.workLink && completionData.workLink.trim()) {
+        const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
+        if (!urlRegex.test(completionData.workLink.trim())) {
+          throw new Error('Please provide a valid URL');
+        }
+      }
+
       const updateData = {
         status: 'submitted',
         submittedAt: new Date().toISOString(),
-        explanation,
-        workLink: workLink || null
+        explanation: completionData.explanation.trim(),
+        workLink: completionData.workLink ? completionData.workLink.trim() : null
       };
 
-      await this.update(updateData);
-      await dbRun('COMMIT');
+      console.log('Updating work item with data:', updateData);
+      
+      const result = await dbRun(`
+        UPDATE work_items 
+        SET status = ?, submittedAt = ?, explanation = ?, workLink = ?
+        WHERE id = ?
+      `, [
+        updateData.status,
+        updateData.submittedAt,
+        updateData.explanation,
+        updateData.workLink,
+        this.id
+      ]);
+
+      console.log('Database update result:', result);
+
+      if (result.changes === 0) {
+        throw new Error('Work item not found or no changes made');
+      }
+
+      const updated = await WorkItem.findById(this.id);
+      if (updated) {
+        Object.assign(this, updated);
+      }
+
+      console.log('markCompleted successful');
       return this;
+      
     } catch (error) {
-      await dbRun('ROLLBACK');
-      throw error;
+      console.error('Error in WorkItem.markCompleted:', error);
+      throw new Error(`Failed to mark task as completed: ${error.message}`);
     }
   }
 
-  async approve(reviewData) {
-    await dbRun('BEGIN TRANSACTION');
+  async approve(reviewData = {}) {
     try {
       const updateData = {
         status: 'approved',
@@ -233,22 +271,19 @@ class WorkItem {
         reviewedBy: reviewData.reviewedBy
       };
 
-      await this.update(updateData);
-      await dbRun('COMMIT');
-      return this;
+      return await this.update(updateData);
     } catch (error) {
-      await dbRun('ROLLBACK');
+      console.error('Error in WorkItem.approve:', error);
       throw new Error(`Failed to approve work item: ${error.message}`);
     }
   }
 
   async reject(reviewData) {
-    if (!reviewData.reviewNotes) {
-      throw new Error('Review notes are required when rejecting work');
-    }
-
-    await dbRun('BEGIN TRANSACTION');
     try {
+      if (!reviewData.reviewNotes) {
+        throw new Error('Review notes are required when rejecting work');
+      }
+
       const updateData = {
         status: 'rejected',
         reviewedAt: new Date().toISOString(),
@@ -259,11 +294,9 @@ class WorkItem {
         workLink: null
       };
 
-      await this.update(updateData);
-      await dbRun('COMMIT');
-      return this;
+      return await this.update(updateData);
     } catch (error) {
-      await dbRun('ROLLBACK');
+      console.error('Error in WorkItem.reject:', error);
       throw new Error(`Failed to reject work item: ${error.message}`);
     }
   }

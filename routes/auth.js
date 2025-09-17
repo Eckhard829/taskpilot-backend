@@ -1,4 +1,3 @@
-// routes/auth.js
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -8,6 +7,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const User = require('../models/User');
 const { google } = require('googleapis');
 
+// Initialize OAuth2 client only if credentials are provided
 let oauth2Client = null;
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI) {
   oauth2Client = new google.auth.OAuth2(
@@ -22,16 +22,10 @@ router.post('/login', async (req, res) => {
   
   console.log('=== LOGIN ATTEMPT ===');
   console.log('Email:', email);
-  console.log('Password provided:', !!password);
   console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
 
-  if (!email || !password) {
-    console.log('Missing email or password');
-    return res.status(400).json({ message: 'Email and password are required' });
-  }
-
   try {
-    const user = await User.findByEmail(email.toLowerCase().trim());
+    const user = await User.findByEmail(email);
     if (!user) {
       console.log('User not found:', email);
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -52,6 +46,7 @@ router.post('/login', async (req, res) => {
 
     await user.updateLastLogin();
 
+    // Create JWT token with all necessary user information
     const tokenPayload = {
       id: user.id,
       email: user.email,
@@ -64,74 +59,131 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign(
       tokenPayload,
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
+    console.log('Token created successfully');
+    console.log('Token starts with:', token.substring(0, 20) + '...');
+
+    // Verify the token was created correctly
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log('Token verification check - decoded payload:', decoded);
+
     res.json({
-      message: 'Login successful',
       token,
       user: user.toJSON()
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.get('/google', (req, res) => {
+router.post('/register', authenticateToken, requireAdmin, async (req, res) => {
+  console.log('=== REGISTER ATTEMPT ===');
+  console.log('Request body:', req.body);
+  console.log('Authenticated user:', req.user);
+
+  const { name, email, password, role } = req.body;
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      role
+    });
+    
+    console.log('User created successfully:', user.toJSON());
+    res.json({ user: user.toJSON() });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.get('/verify', authenticateToken, async (req, res) => {
+  console.log('=== TOKEN VERIFICATION ===');
+  console.log('User from token:', req.user);
+  
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      console.log('User not found in database:', req.user.id);
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    console.log('User verification successful:', user.toJSON());
+    res.json({ user: user.toJSON() });
+  } catch (error) {
+    console.error('Verify error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Google OAuth Routes
+router.get('/google', async (req, res) => {
   if (!oauth2Client) {
-    console.error('Google OAuth not configured');
     return res.status(500).json({ message: 'Google OAuth not configured' });
   }
 
-  const scopes = [
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'https://www.googleapis.com/auth/calendar.events'
-  ];
+  try {
+    // Get token from query parameter or Authorization header
+    const token = req.query.token || (req.headers.authorization && req.headers.authorization.replace('Bearer ', ''));
+    
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
 
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: scopes,
-    prompt: 'consent'
-  });
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Create temporary token for OAuth state
+    const tempToken = jwt.sign(
+      { userId: decoded.id, type: 'oauth_temp' },
+      process.env.JWT_SECRET,
+      { expiresIn: '10m' }
+    );
 
-  res.redirect(url);
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/calendar.events'],
+      state: tempToken,
+    });
+    
+    res.redirect(url);
+  } catch (error) {
+    console.error('Error generating Google OAuth URL:', error);
+    
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    
+    res.status(500).json({ message: 'Failed to generate OAuth URL' });
+  }
 });
 
 router.get('/google/callback', async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!oauth2Client) {
+    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error&reason=not_configured`);
+  }
+
   try {
-    if (!oauth2Client) {
-      console.error('Google OAuth not configured');
-      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`);
+    const decoded = jwt.verify(state, process.env.JWT_SECRET);
+    
+    if (decoded.type !== 'oauth_temp') {
+      return res.status(400).json({ message: 'Invalid OAuth state' });
     }
 
-    const { code } = req.query;
-    if (!code) {
-      console.error('No code provided in Google OAuth callback');
-      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`);
-    }
-
+    const userId = decoded.userId;
     const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
-
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const { data } = await oauth2.userinfo.get();
-
-    let user = await User.findByEmail(data.email.toLowerCase().trim());
-    let userId;
-
+    
+    const user = await User.findById(userId);
     if (!user) {
-      const hashedPassword = await bcrypt.hash('google-auth-' + Math.random().toString(36).slice(2), 10);
-      const newUser = await User.create({
-        name: data.name || 'Google User',
-        email: data.email.toLowerCase().trim(),
-        password: hashedPassword,
-        role: 'worker'
-      });
-      userId = newUser.id;
-    } else {
-      userId = user.id;
+      return res.status(404).json({ message: 'User not found' });
     }
 
     await dbRun(
@@ -139,17 +191,23 @@ router.get('/google/callback', async (req, res) => {
       [tokens.access_token, tokens.refresh_token, userId]
     );
 
-    const redirectUrl = user && user.role === 'admin' 
+    // FIXED: Use FRONTEND_URL instead of REACT_APP_FRONTEND_URL
+    const redirectUrl = user.role === 'admin' 
       ? `${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin`
       : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/worker`;
     
     res.redirect(`${redirectUrl}?googleAuth=success`);
+    
   } catch (error) {
     console.error('Error in Google OAuth callback:', error);
-    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`);
+    
+    // FIXED: Use FRONTEND_URL instead of REACT_APP_FRONTEND_URL
+    const errorRedirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}?googleAuth=error`;
+    res.redirect(errorRedirectUrl);
   }
 });
 
+// Check Google Calendar connection status
 router.get('/google/status', authenticateToken, async (req, res) => {
   try {
     const user = await dbGet(
@@ -169,6 +227,7 @@ router.get('/google/status', authenticateToken, async (req, res) => {
   }
 });
 
+// Disconnect Google Calendar
 router.post('/google/disconnect', authenticateToken, async (req, res) => {
   try {
     await dbRun(

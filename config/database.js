@@ -1,4 +1,4 @@
-// database.js
+// config/database.js - Complete file
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
@@ -52,15 +52,41 @@ const initializeDatabase = () => {
         console.error('Error creating users table:', err);
       } else {
         console.log('Users table ready');
+        
+        db.all("PRAGMA table_info(users)", (err, columns) => {
+          if (!err) {
+            const columnNames = columns.map(col => col.name);
+            if (!columnNames.includes('googleAccessToken')) {
+              db.run('ALTER TABLE users ADD COLUMN googleAccessToken TEXT', (err) => {
+                if (!err) console.log('Added googleAccessToken column to users');
+              });
+            }
+            if (!columnNames.includes('googleRefreshToken')) {
+              db.run('ALTER TABLE users ADD COLUMN googleRefreshToken TEXT', (err) => {
+                if (!err) console.log('Added googleRefreshToken column to users');
+              });
+            }
+          }
+        });
       }
     });
 
+    // First drop the existing table
+    db.run('DROP TABLE IF EXISTS work_items', (err) => {
+      if (err) {
+        console.error('Error dropping work_items table:', err);
+      } else {
+        console.log('Dropped existing work_items table');
+      }
+    });
+
+    // Then recreate with correct schema
     db.run(`
       CREATE TABLE IF NOT EXISTS work_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         workerId INTEGER NOT NULL,
         task TEXT NOT NULL,
-        description TEXT,
+        description TEXT DEFAULT '',
         instructions TEXT NOT NULL,
         deadline DATETIME NOT NULL,
         status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'submitted', 'approved', 'rejected')),
@@ -72,15 +98,37 @@ const initializeDatabase = () => {
         reviewNotes TEXT,
         assignedBy INTEGER NOT NULL,
         reviewedBy INTEGER,
-        FOREIGN KEY (workerId) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (assignedBy) REFERENCES users(id),
-        FOREIGN KEY (reviewedBy) REFERENCES users(id)
+        FOREIGN KEY (workerId) REFERENCES users (id) ON DELETE CASCADE,
+        FOREIGN KEY (assignedBy) REFERENCES users (id) ON DELETE CASCADE,
+        FOREIGN KEY (reviewedBy) REFERENCES users (id) ON DELETE SET NULL
       )
     `, (err) => {
       if (err) {
         console.error('Error creating work_items table:', err);
       } else {
-        console.log('Work_items table ready');
+        console.log('Work items table recreated with correct schema');
+      }
+    });
+
+    db.get('SELECT * FROM users WHERE email = ?', ['admin@taskpilot.com'], async (err, row) => {
+      if (err) {
+        console.error('Error checking for admin user:', err);
+      } else if (!row) {
+        try {
+          const hashedPassword = await bcrypt.hash('admin123', 10);
+          db.run(`
+            INSERT INTO users (name, email, password, role)
+            VALUES (?, ?, ?, ?)
+          `, ['Admin', 'admin@taskpilot.com', hashedPassword, 'admin'], (err) => {
+            if (err) {
+              console.error('Error creating admin user:', err);
+            } else {
+              console.log('Default admin user created (admin@taskpilot.com / admin123)');
+            }
+          });
+        } catch (error) {
+          console.error('Error hashing admin password:', error);
+        }
       }
     });
   });
@@ -151,7 +199,6 @@ const checkDatabaseHealth = () => {
         reject(err);
       } else {
         console.log('Database health check passed');
-        resolve(row);
       }
     });
   });
