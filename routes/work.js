@@ -1,4 +1,4 @@
-// routes/work.js - Complete file with fixes
+// routes/work.js
 const express = require('express');
 const router = express.Router();
 const WorkItem = require('../models/WorkItem');
@@ -62,67 +62,94 @@ const createCalendarEvent = async (user, workItem) => {
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  const event = {
-    summary: `TaskPilot: ${workItem.task}`,
-    description: `Task: ${workItem.task}\n\nDescription: ${workItem.description || 'No description'}\n\nInstructions: ${workItem.instructions}\n\nAssigned via TaskPilot`,
-    start: {
-      dateTime: new Date(workItem.deadline).toISOString(),
-      timeZone: 'UTC',
-    },
-    end: {
-      dateTime: new Date(new Date(workItem.deadline).getTime() + 60 * 60 * 1000).toISOString(),
-      timeZone: 'UTC',
-    },
-    reminders: {
-      useDefault: false,
-      overrides: [
-        { method: 'email', minutes: 30 },
-        { method: 'popup', minutes: 10 },
-      ],
-    },
-  };
-
   try {
-    const response = await calendar.events.insert({
+    const event = {
+      summary: `Task: ${workItem.task}`,
+      description: workItem.description,
+      start: {
+        dateTime: new Date(workItem.deadline).toISOString(),
+        timeZone: 'UTC',
+      },
+      end: {
+        dateTime: new Date(new Date(workItem.deadline).getTime() + 60 * 60 * 1000).toISOString(),
+        timeZone: 'UTC',
+      },
+    };
+
+    await calendar.events.insert({
       calendarId: 'primary',
       resource: event,
     });
     console.log(`Calendar event created for task ${workItem.id} for user ${user.email}`);
   } catch (error) {
-    console.error('Error creating calendar event:', error.message);
-    if (error.code === 401) {
-      console.log('Google token expired for user', user.email);
-    }
+    console.error('Error creating calendar event:', error);
   }
 };
 
-router.get('/test', authenticateToken, (req, res) => {
-  console.log('=== WORK ROUTE TEST ===');
-  console.log('User from middleware:', req.user);
-  
-  res.status(200).json({ 
-    message: 'Backend is working',
-    user: req.user,
-    timestamp: new Date().toISOString()
-  });
+router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { workerId, task, description, instructions, deadline } = req.body;
+
+    if (!workerId || !task || !instructions || !deadline) {
+      return res.status(400).json({ message: 'Missing required fields: workerId, task, instructions, deadline' });
+    }
+
+    const worker = await User.findById(workerId);
+    if (!worker) {
+      return res.status(404).json({ message: 'Worker not found' });
+    }
+
+    const admin = await User.findById(req.user.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin user not found' });
+    }
+
+    const workItemData = {
+      workerId,
+      task,
+      description: description || '',
+      instructions,
+      deadline,
+      assignedBy: req.user.id,
+    };
+
+    const workItem = await WorkItem.create(workItemData);
+
+    const notificationResult = await sendTaskNotification(
+      worker.email,
+      `New Task Assigned: ${task}`,
+      `You have been assigned a new task: ${task}\n\nDescription: ${description || 'No description provided'}\nInstructions: ${instructions}\nDeadline: ${new Date(deadline).toLocaleString()}\n\nPlease check TaskPilot for details.`
+    );
+
+    if (worker.googleAccessToken && worker.googleRefreshToken) {
+      await createCalendarEvent(worker, workItem);
+    }
+
+    res.status(201).json({
+      message: 'Task assigned successfully',
+      workItem: workItem.toJSON(),
+      notificationSent: notificationResult.success,
+    });
+  } catch (error) {
+    console.error('Error assigning task:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
 });
 
 router.get('/', authenticateToken, async (req, res) => {
-  console.log('=== GET WORK ITEMS ===');
-  console.log('User:', req.user);
-  
   try {
-    let workItems;
-    if (req.user.role === 'admin') {
-      console.log('Fetching all work items for admin');
-      workItems = await WorkItem.findAll();
-    } else {
-      console.log('Fetching work items for worker ID:', req.user.id);
-      workItems = await WorkItem.findAll({ workerId: req.user.id });
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
-    
-    console.log(`Found ${workItems.length} work items`);
-    res.status(200).json(workItems);
+
+    let filters = {};
+    if (user.role === 'worker') {
+      filters.workerId = user.id;
+    }
+
+    const workItems = await WorkItem.findAll(filters);
+    res.json(workItems.map(item => item.toJSON()));
   } catch (error) {
     console.error('Error fetching work items:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -130,243 +157,56 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 router.get('/submitted', authenticateToken, requireAdmin, async (req, res) => {
-  console.log('=== GET SUBMITTED WORK ===');
-  console.log('Admin user:', req.user);
-  
   try {
-    const submittedWorkItems = await WorkItem.findAll({ status: 'submitted' });
-    console.log(`Found ${submittedWorkItems.length} submitted work items`);
-    res.status(200).json(submittedWorkItems);
+    const workItems = await WorkItem.findAll({ status: 'submitted' });
+    res.json(workItems.map(item => item.toJSON()));
   } catch (error) {
-    console.error('Error fetching submitted work items:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-router.get('/worker/:workerId', authenticateToken, async (req, res) => {
-  try {
-    const workerId = parseInt(req.params.workerId);
-    
-    if (req.user.role !== 'admin' && req.user.id !== workerId) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    const workItems = await WorkItem.findAll({ workerId });
-    res.status(200).json(workItems);
-  } catch (error) {
-    console.error('Error fetching worker tasks:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-router.get('/:id', authenticateToken, async (req, res) => {
-  try {
-    const workItem = await WorkItem.findById(req.params.id);
-    if (!workItem) {
-      return res.status(404).json({ message: 'Work item not found' });
-    }
-
-    if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    res.status(200).json(workItem);
-  } catch (error) {
-    console.error('Error fetching work item:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-router.post('/assign', authenticateToken, requireAdmin, async (req, res) => {
-  console.log('=== TASK ASSIGNMENT ===');
-  console.log('Request body:', req.body);
-  console.log('Admin user:', req.user);
-  
-  try {
-    const { workerId, task, description, instructions, deadline } = req.body;
-
-    if (!workerId || !task || !instructions || !deadline) {
-      console.log('Missing required fields:', { workerId, task: !!task, instructions: !!instructions, deadline: !!deadline });
-      return res.status(400).json({ message: 'WorkerId, task, instructions, and deadline are required' });
-    }
-
-    console.log('Creating work item...');
-    const workItem = await WorkItem.create({
-      workerId,
-      task,
-      description: description || '',
-      instructions,
-      deadline,
-      assignedBy: req.user.id,
-      status: 'pending'
-    });
-
-    console.log('Work item created successfully:', workItem.id);
-
-    const worker = await User.findById(workerId);
-    if (worker) {
-      console.log('Sending notification to worker:', worker.email);
-      const deadlineDate = new Date(deadline);
-      
-      await sendTaskNotification(
-        worker.email,
-        'New Task Assigned - TaskPilot',
-        `Hello ${worker.name},
-
-You have been assigned a new task:
-
-Task: ${task}
-${description ? `Description: ${description}` : ''}
-Instructions: ${instructions}
-Deadline: ${deadlineDate.toLocaleDateString()} at ${deadlineDate.toLocaleTimeString()}
-
-This task has been added to your Google Calendar (if connected).
-
-Please log into TaskPilot to view and complete this task.
-
-Best regards,
-TaskPilot Team`
-      );
-
-      await createCalendarEvent(worker, workItem);
-    }
-
-    console.log('Task assignment completed successfully');
-    res.status(201).json({
-      message: 'Task assigned successfully',
-      workItem: workItem.toJSON()
-    });
-  } catch (error) {
-    console.error('Error assigning task:', error);
-    console.error('Error stack:', error.stack);
+    console.error('Error fetching submitted work:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 router.put('/complete/:id', authenticateToken, async (req, res) => {
-  console.log('=== TASK COMPLETION REQUEST ===');
-  console.log('Task ID:', req.params.id);
-  console.log('User:', req.user);
-  console.log('Body:', req.body);
-  
   try {
-    const { explanation, workLink } = req.body;
-    
-    if (!explanation || !explanation.trim()) {
-      return res.status(400).json({ 
-        message: 'Explanation is required',
-        error: 'Missing or empty explanation field'
-      });
-    }
-    
     const workItem = await WorkItem.findById(req.params.id);
-
     if (!workItem) {
-      return res.status(404).json({ 
-        message: 'Work item not found',
-        error: `No work item found with ID: ${req.params.id}`
-      });
+      return res.status(404).json({ message: 'Work item not found' });
     }
 
-    if (req.user.role !== 'admin' && req.user.id !== workItem.workerId) {
-      return res.status(403).json({ 
-        message: 'Access denied',
-        error: 'You can only complete tasks assigned to you'
-      });
+    if (workItem.workerId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to complete this task' });
     }
 
-    if (workItem.status === 'submitted') {
-      return res.status(400).json({ 
-        message: 'Task is already submitted for review',
-        error: 'Cannot resubmit task that is already under review'
-      });
+    await workItem.complete(req.body);
+
+    const adminUsers = await User.findAll({ role: 'admin' });
+    for (const admin of adminUsers) {
+      await sendTaskNotification(
+        admin.email,
+        `Task Submitted for Review: ${workItem.task}`,
+        `Task "${workItem.task}" has been submitted by ${req.user.name} for review.\n\nExplanation: ${req.body.explanation}\n${req.body.workLink ? `Work Link: ${req.body.workLink}\n` : ''}\nPlease review in TaskPilot.`
+      );
     }
-
-    if (workItem.status === 'approved') {
-      return res.status(400).json({ 
-        message: 'Task is already approved',
-        error: 'Cannot modify approved task'
-      });
-    }
-
-    console.log('All validations passed, attempting to mark completed...');
-
-    const updatedWorkItem = await workItem.markCompleted({ 
-      explanation: explanation.trim(), 
-      workLink: workLink?.trim() || null 
-    });
-
-    console.log('Task marked as completed successfully');
 
     res.status(200).json({
       message: 'Task submitted for review successfully',
-      workItem: updatedWorkItem.toJSON(),
-      success: true
+      workItem: workItem.toJSON()
     });
-    
   } catch (error) {
     console.error('Error completing task:', error);
-    console.error('Error stack:', error.stack);
-    
-    if (error.message.includes('Explanation is required')) {
-      return res.status(400).json({ 
-        message: error.message,
-        error: 'Validation failed'
-      });
-    }
-    
-    if (error.message.includes('valid URL')) {
-      return res.status(400).json({ 
-        message: error.message,
-        error: 'Invalid URL format'
-      });
-    }
-    
-    if (error.message.includes('UNIQUE constraint')) {
-      return res.status(409).json({ 
-        message: 'Task is already being processed',
-        error: 'Database constraint violation'
-      });
-    }
-
-    if (error.message.includes('FOREIGN KEY')) {
-      return res.status(400).json({ 
-        message: 'Invalid task or user reference',
-        error: 'Database foreign key constraint'
-      });
-    }
-
-    if (error.message.includes('not found')) {
-      return res.status(404).json({ 
-        message: error.message,
-        error: 'Resource not found'
-      });
-    }
-    
-    res.status(500).json({ 
-      message: 'Server error while completing task',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
-      timestamp: new Date().toISOString(),
-      taskId: req.params.id
-    });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { reviewNotes } = req.body;
     const workItem = await WorkItem.findById(req.params.id);
-
     if (!workItem) {
       return res.status(404).json({ message: 'Work item not found' });
     }
 
-    if (workItem.status !== 'submitted') {
-      return res.status(400).json({ message: 'Work item must be submitted for review first' });
-    }
-
     await workItem.approve({
-      reviewNotes: reviewNotes || '',
+      reviewNotes: req.body.reviewNotes,
       reviewedBy: req.user.id
     });
 
@@ -374,17 +214,8 @@ router.put('/approve/:id', authenticateToken, requireAdmin, async (req, res) => 
     if (worker) {
       await sendTaskNotification(
         worker.email,
-        'Task Approved - TaskPilot',
-        `Hello ${worker.name},
-
-Congratulations! Your task "${workItem.task}" has been approved.
-
-${reviewNotes ? `Review Notes: ${reviewNotes}` : ''}
-
-Great work! Keep up the excellent performance.
-
-Best regards,
-TaskPilot Team`
+        `Task Approved: ${workItem.task}`,
+        `Your task "${workItem.task}" has been approved.\n${req.body.reviewNotes ? `Review Notes: ${req.body.reviewNotes}\n` : ''}\nCheck TaskPilot for details.`
       );
     }
 
@@ -400,24 +231,17 @@ TaskPilot Team`
 
 router.put('/reject/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { reviewNotes } = req.body;
-    
-    if (!reviewNotes || reviewNotes.trim().length < 10) {
-      return res.status(400).json({ message: 'Detailed review notes are required when rejecting work (minimum 10 characters)' });
-    }
-
     const workItem = await WorkItem.findById(req.params.id);
-
     if (!workItem) {
       return res.status(404).json({ message: 'Work item not found' });
     }
 
-    if (workItem.status !== 'submitted') {
-      return res.status(400).json({ message: 'Work item must be submitted for review first' });
+    if (!req.body.reviewNotes) {
+      return res.status(400).json({ message: 'Review notes are required for rejection' });
     }
 
     await workItem.reject({
-      reviewNotes: reviewNotes.trim(),
+      reviewNotes: req.body.reviewNotes,
       reviewedBy: req.user.id
     });
 
@@ -425,24 +249,13 @@ router.put('/reject/:id', authenticateToken, requireAdmin, async (req, res) => {
     if (worker) {
       await sendTaskNotification(
         worker.email,
-        'Work Incomplete - TaskPilot',
-        `Hello ${worker.name},
-
-Your task "${workItem.task}" needs revision and has been returned to you.
-
-Review Notes: ${reviewNotes}
-
-Please review the feedback, make the necessary changes, and resubmit your work.
-
-You can find the task in your "Work To Do" section in TaskPilot.
-
-Best regards,
-TaskPilot Team`
+        `Task Rejected: ${workItem.task}`,
+        `Your task "${workItem.task}" has been rejected.\nReview Notes: ${req.body.reviewNotes}\nPlease revise and resubmit in TaskPilot.`
       );
     }
 
     res.status(200).json({
-      message: 'Work rejected and returned for revision',
+      message: 'Work rejected successfully',
       workItem: workItem.toJSON()
     });
   } catch (error) {

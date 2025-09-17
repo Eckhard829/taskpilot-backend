@@ -1,4 +1,4 @@
-// WorkItem.js
+// models/WorkItem.js
 const { dbGet, dbAll, dbRun } = require('../config/database');
 
 class WorkItem {
@@ -46,6 +46,11 @@ class WorkItem {
       throw new Error('Status must be pending, submitted, approved, or rejected');
     }
 
+    const assignedByUser = await dbGet('SELECT id FROM users WHERE id = ?', [assignedBy]);
+    if (!assignedByUser) {
+      throw new Error('Invalid assignedBy user ID');
+    }
+
     if (workItemData.workLink) {
       const urlRegex = /^https?:\/\/[^\s$.?#].[^\s]*$/;
       if (!urlRegex.test(workItemData.workLink)) {
@@ -64,6 +69,7 @@ class WorkItem {
       return await WorkItem.findById(result.id);
     } catch (error) {
       await dbRun('ROLLBACK');
+      console.error('Database error in WorkItem.create:', error);
       throw error;
     }
   }
